@@ -1,43 +1,46 @@
-# Safe checkpoint — repair build is not release-ready
+# Safe checkpoint - build remains unfinished
 
-Scope: all installed changes are confined to `D:\Tests\DAZ Test Folder\Scripts\matew\Wearables Manager 2`. The original sibling `Wearables Manager` was read only: all 146 files have unchanged names, lengths and SHA-256 hashes after installation. No existing DAZ scene/process, toolbar, credentials, security setting, Git global setting or remote repository was changed. Remote creation remains deferred.
+The continuation is paused at the parent's request. Product writes remain confined to D:\Tests\DAZ Test Folder\Scripts\matew\Wearables Manager 2. The original sibling Wearables Manager has all 146 original names, lengths and SHA-256 hashes unchanged. No existing DAZ scene/process, installed toolbar, credentials, security setting or Git global setting was changed. Remote setup remains deferred; no push occurred.
 
-Local commits:
+## Installed and committed
 
-- Baseline: `1d15974476ccecaa30f8fe690a9bee6e991194bc`.
-- Repair: `c686a279e2f0dfa70c0a9ab071c915b4897dcb21` — five `.dsa` changes, four unchanged `.dse` moves into `LegacyCompiled`, and its README.
+- Baseline 1d15974476ccecaa30f8fe690a9bee6e991194bc.
+- Initial repair c686a279e2f0dfa70c0a9ab071c915b4897dcb21; initial checkpoint f3bb4567fbdaeeef578f2ce4747a743f6b911d95.
+- Alias/queue correction 8d3fc75: all four engines compare nodes by native session identity with a separate live membership check. Exact helper diagnostics now recognize DAZ4 constructor/enumeration aliases and save stable references in both DAZ4 and DAZ6.
+- Regression/evidence commit cd19f56: installed portable checks pass 379/379, with 2 explicit skips. Queue ownership groups aliases and validates every owner before cleanup; additional native queue coverage is pending.
 
-Installed coverage: failed snapshot I/O checks and pending-record preservation; parent-first FitTo/collision restoration; persistent reference and binding ambiguity guards; explicit bone proxies/legacy review; selective failure containment/current storage ownership checks; durable sidecar paths and retention; icon JSON and emissive recovery validation; selective emissive capture; property guards/owned control Undo labels; busy-finally cleanup; sibling/encoded PDF launcher. These are source changes supported by isolated mocks. Native testing has invalidated the assumption that metadata participates in the property Undo block automatically.
+The installed product still uses the earlier raw metadata helpers and strict numeric export-result check. The next metadata/error-code repair is preserved in scratch only. Do not treat its native persistence results as validation of installed code or as full release approval.
 
-Packaged checks: 379 passed, 0 failed, 2 skipped. They run against actual installed scripts. Five revised sources loaded and passed syntax checks in DAZ4 4.24.0.4 and DAZ6 6.25.2026.14722. Final guide formatting removed trailing whitespace after the initial syntax run; all five final files were subsequently rechecked in DAZ4. This does not establish successful end-to-end operation.
+## Native proof for the uninstalled candidate
 
-## Native blockers to fix next
+Candidate Take Off SHA-256: 6565d59cffa9669c5c3be3ea06f165c196e3fe73a4ca0e766c5343b509ae5b4a.
 
-1. **Resolved and installed: DAZ4 live node identity.** The alias-safe session identity comparison now covers node relations and node collections in all four engines. Exact candidate helper diagnostics in DAZ4 and DAZ6 recognize live constructor/enumeration aliases and save stable references successfully. Native rig-bone membership and Undo-recreated node identities remain additional coverage checks. Local repair commit: 8d3fc75.
-2. **High / confirmed native behavior in both versions: metadata Undo/cancel.** Actual `AddStringDataToNodeEx`/`AddStringDataToNode` helpers (unchanged from baseline) leave a newly created data item/value after native Undo, while the parent rolls back correctly. Updating an existing field from `before` to `during` inside a cancelled operation leaves `during`. Owned holds close correctly; they do not make those metadata writes undoable. Implement explicit before-state compensation for failed operations. Accepted Undo/Redo needs a separately proven mechanism; a public script custom Undo-item constructor was not verified. Do not infer transaction atomicity from the mock Undo model.
-3. **Confirmed DAZ4 export error handling blocker:** actual native material export returns a DzError object. Its explicit valueOf() returns 0 for success and 98 for a blocked destination; Number(raw) misleadingly returns 0 for both. The earlier Number(...) recommendation was unsafe and is superseded. Normalize the typed primitive from an explicit valueOf() at the narrow documented API call site, then require code zero and valid output. DAZ6 returns primitive 0/98. The corrected helper is under validation; it is not installed yet.
-4. **Queue alias correction installed:** cleanup captures live owners, deduplicates and groups by native session identity, validates all owners before field mutation and removes each empty item once. All 28 alias queue mocks pass. Additional native queue coverage is pending.
+DAZ4 4.24.0.4 and DAZ6 6.25.2026.14722 each passed all five sealed persistence cases: exact source identity; Unicode code-point and hidden user string-property scene save/reload; actual authoritative metadata bridge migration/persistence with untouched legacy fields; actual material snapshot/color/default-UV restoration on disposable triangle geometry; unselected-shell RootLabel targeting with multiple selected nodes and selection preservation. No real graft/shader content was loaded and alternate UVs were unavailable.
 
-The earlier blank-figure FitTo failure was a fixture strict-equality assumption. Focused diagnostics prove blank native figures accept FitTo in both versions. Initial empty-shape material attachment failure likewise does not prove an exporter bug; valid geometry is needed.
+DAZ4 actual exporter success/failure proves Number(raw DzError) unsafe: both convert to zero, whereas explicit valueOf() yields primitive 0 and 98. The candidate normalizes that typed primitive at direct documented API call sites, checks success code and readable output, and passes real DAZ4/6 export/restore. Native DzError exposes no uniquely observable public brand; call sites stay narrow.
 
-Native DAZ4 behavior did verify: absent-shape backup failure publishes no record; physical backup path/readability/missing/empty checks; missing durable backup retains pending fields; sparse single-wrapper metadata cleanup. Full restoration, smoothing-modifier collision, actual material export/apply, emissive behavior/animation, accepted Undo/retry lifecycle, real geografts, OS PDF handler and modal UI are still pending.
+Separate capability fixtures in both versions prove existing hidden native string-property values Undo/Redo/cancel correctly, and property creation inside a hold is physically removed by Undo/cancel. The bridge uses property-absence-only legacy fallback, an authoritative empty value, and a detached before-state journal with explicit failed-compensation diagnostics. Actual integrated bridge Undo/Redo and failure compensation still need native behavior tests.
 
-Completed WM native runs closed and the two preexisting DAZ processes retain their PID/start-time identities. WM continuation retains exclusive native ownership while further guarded tests run. Scratch fixtures, results and correction drafts are preserved under `C:\Users\Andrii\Documents\Codex\2026-10-01\task\wm-audit\implementation`.
+Scratch checks: 92 actual bridge tests, 102 storage plus 2 skips, 28 queue, 72 graph, 48 alias, 40 integration and 56 controls pass. Flow suites explicitly mock the bridge contract; they do not replace actual bridge/native validation.
 
-Evidence:
+## Resume before installing the candidate
 
-- Original preservation: `original-full-after-install.json` (146 before/after; Changed=0).
-- Mock receipt: this repository's ignored `.test-output/results.json`.
-- DAZ4 focused diagnostics: `compat/native/wm_audit_30d6ff579d9b46aa9072dfb8bf34d407/results.json`.
-- DAZ6 focused diagnostics: `compat/native/wm_audit_38a14f82808c4b6c9ef3e624dc1f9a6b/results.json`.
-- Initial behavior receipt: `compat/native/wm_audit_9dcde4cf8c4c419e994340ca15d06a22/results.json`.
-- Drafts: `graph/wm2-node-comparison-proposal.dsa`, `graph/node-comparison-replacements.json`, `storage/queue-wrapper-alias-proposal.dsa`.
+1. Complete and run the prepared native behavior fixture on both versions: actual metadata Undo/Redo/cancel, parent/FitTo/collision relations, queue aliases, minimal bone membership and owner resurrection, controls and animated-emissive policy.
+2. If those pass, install only the five candidate scripts after exact current installed hash checks, run the packaged aggregate against the actual installed sources, and repeat the bounded native proof against installed files.
+3. Verify all 146 original hashes again, then commit the validated source and regression changes logically. Keep named loadouts and Archmage integration outside this repair.
 
-Safe continuation order: validate/install explicit DzError unboxing; add failure compensation for metadata; prove accepted Undo/Redo strategy; construct valid disposable geometry; rerun native storage and control fixtures on both versions; then finalize the build. Named loadouts/Archmage integration remain optional later work, outside this repair checkpoint.
+No WM-owned native process remains. The untouched user processes are DAZ6 PID 57872 (start UTC 2026-09-26T01:58:22.2583422Z) and DAZ4 PID 177096 (start UTC 2026-10-01T03:32:28.1437405Z). Native ownership is released at this checkpoint.
 
-Continuation evidence (2026-10-01):
+## Evidence and preserved experiments
 
-- Alias native DAZ4: compat/native/wm_audit_66a65c2274cc46d78257465b2cfa1966/results.json.
-- Alias native DAZ6: compat/native/wm_audit_b3fe8a1429b843e69bcee26fa9e72bd7/results.json.
-- Property/DzError native capabilities: DAZ4 wm_audit_f4603361e1e34b3faddb377ddb846776; DAZ6 wm_audit_53bf4e4c347f400ba0363a47e7f56e49. Both support native property value Undo/Redo/cancel; new property attachment is physically removed by Undo/cancel. The legacy tests expecting the attached property after rollback were overly strict: untouched legacy fallback on property absence preserves logical recovery. No new metadata adapter is installed yet.
-- Actual installed native DAZ6 snapshot save/material/default-UV restore and hidden-property scene persistence: compat/native/wm_audit_c44d55bd80b844048eb7f2b58ee5b447/results.json. These are disposable triangle checks; alternate UVs, real graft content, modal UI and OS PDF launch remain unverified. Literal Unicode in that fixture was already substituted before export, so this run does not prove Unicode preservation.
+Scratch root: C:\Users\Andrii\Documents\Codex\2026-10-01\task\wm-audit\implementation.
+
+- continuation-checkpoint.json: exact installed/candidate inventories and pause state.
+- original-full-after-checkpoint.json: final 146-file original preservation proof.
+- compat/native/wm_audit_f0b1352d99024a5da4473fe4e24614dc/results.json: DAZ4 persistence.
+- compat/native/wm_audit_8a5c5e9438e74f2da99a03fa65f3a549/results.json: DAZ6 persistence.
+- compat/native-persistence.proposed.dsa: sealed SHA-256 051f7fdcf71f77a06ddf8023799641e1949704e835491455b6f4adc42df9f174.
+- storage/wm2-metadata-bridge-proposal.dsa and prepare-metadata-bridge.cjs: repair source and exact generator.
+- candidate/: complete uninstalled candidate. integrate.cjs rebuilds it from the preserved baseline.
+- graph/native_graph_checks_fragment.dsa and controls/native_controls_fragment.dsa: prepared actual-source native checks; their combined behavior execution remains pending.
+- deliverables/Tests/: refreshed portable checks for the candidate, not yet installed; the repository's installed checks remain at the committed 379-pass checkpoint.
