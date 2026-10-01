@@ -41,7 +41,9 @@ var WM2Support = (function () {
         if (!array(value) || value.length > limit) return false;
         for (var i = 0; i < value.length; i++) if (!own.call(value, String(i))) return false;
         for (var key in value) {
-            if (!own.call(value, key) || !/^(0|[1-9][0-9]*)$/.test(key) || Number(key) >= value.length) return false;
+            // Host/script array extensions are inherited, not settings data.
+            if (!own.call(value, key)) continue;
+            if (!/^(0|[1-9][0-9]*)$/.test(key) || Number(key) >= value.length) return false;
         }
         return true;
     }

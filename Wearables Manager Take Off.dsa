@@ -38,6 +38,8 @@ include(sWM2ResourcesPath + "/WM2 Settings UI.dsa");
 
 	var bReturnBelongings = false;
 	var bUseTransferMark = true;
+	// Launch-time Alt overrides belong to the Full launcher.
+	var bAltPressed = false;
 	var bTransferByDefault = true;
 
 

@@ -26,6 +26,7 @@ for(const file of files){
 }
 for(const file of settingsFiles)new vm.Script(fs.readFileSync(path.join(root,file),'utf8'),{filename:file});
 const suites=[
+ ['graph/launch-modifiers.cjs','--source-root',root,'--original-root',baseline,'--output',path.join(output,'launch-modifier-results.json')],
  ['features/config.cjs',path.join(root,'Resources/WM2 Support.dsa'),path.join(output,'features-config.json')],
  ['features/icons.cjs','--source-root',root,'--support-source',path.join(root,'Resources/WM2 Support.dsa'),'--integrated'],
  ['features/figures.cjs','--factory',path.join(root,'Resources/WM2 Support.dsa'),'--output',path.join(output,'features-figures.json')],

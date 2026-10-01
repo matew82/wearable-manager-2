@@ -47,6 +47,8 @@ include(sWM2ResourcesPath + "/WM2 Settings UI.dsa");
 	var ARR_HUMAN_FIGURES_NAMES = ["Genesis", "Genesis2Female", "Genesis2Male", "Genesis3Female", "Genesis3Male", "Genesis8Female", "Genesis8Male", "Genesis8_1Female", "Genesis8_1Male", "Genesis9", "Genesis9_1", "Genesis10", "Genesis10Female", "Genesis10Male"];
 	var oWM2Config = WM2Support.load(PATH_ICONS).config;
 
+	// Launch-time Alt overrides belong to the Full launcher.
+	var bAltPressed = false;
 	var bTransferByDefault = true;
 
 
