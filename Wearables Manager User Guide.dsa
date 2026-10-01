@@ -1,19 +1,19 @@
 // DAZ Studio version 4.9.0.0 filetype DAZ Script
 
 /**********************************************************************
- 
+
 	This script is provided as part of the Daz Script Documentation. The
 	contents of this script, and\or any portion thereof, may only be used
 	in accordance with the following license:
- 
+
 	Creative Commons Attribution 3.0 Unported (CC BY 3.0)
 	- http://creativecommons.org/licenses/by/3.0
- 
+
 	To contact Daz 3D or for more information about Daz Script visit the
 	Daz 3D website:
- 
+
 	- http://www.daz3d.com
- 
+
 **********************************************************************/
 // Source: http://docs.daz3d.com/doku.php/public/software/dazstudio/4/referenceguide/scripting/api_reference/samples/general_ui/display_document_dynamic/start
 
@@ -21,7 +21,7 @@
 // serves as our main loop,
 // limits the scope of variables
 (function( sRelativePath ){
-	
+
 	/*********************************************************************/
 	// String : A function for retrieving a translation if one exists
 	function text( sText )
@@ -31,55 +31,71 @@
 			// Return the translated (if any) text
 			return qsTr( sText );
 		}
- 
+
 		// Return the original text
 		return sText;
 	};
-	
+
 	/*********************************************************************/
-	// Get the content manager
-	var oContentMgr = App.getContentMgr();
-	// If we do not have a content manager
-	if( !oContentMgr ){
-		// We are done...
-		return;
-	}
-	
-	// Declareworking variables
-	var sPreferredBasePath, sAbsolutePath;
-	
-	// Get the path of this script
+	// Construct a file URL without treating filename characters as URL delimiters.
+	function localFileURL( sPath )
+	{
+		var sNormalized = String( sPath ).replace( /\\/g, "/" );
+		var sEncoded = encodeURI( sNormalized ).replace( /#/g, "%23" ).replace( /\?/g, "%3F" );
+		if( sNormalized.indexOf( "//" ) == 0 ) return "file:" + sEncoded;
+		if( sNormalized.charAt( 0 ) == "/" ) return "file://" + sEncoded;
+		return "file:///" + sEncoded;
+	};
+
+	// Prefer the document installed beside this launcher, including renamed folders.
 	var sScriptPath = getScriptFileName();
-	
-	// If the version is 4.8.1.51 or newer
-	if( App.version64 >= 0x0004000800010033 ){
-		// Define the directory type to look in
-		var nDirType = DzContentMgr.AllDirs;
-		
-		// If the version is 4.9.0.51 or newer
-		if( App.version64 >= 0x0004000900000033 ){
-			// Also look in cloud directories
-			nDirType = DzContentMgr.AllDirsAndCloud;
-		}
-		
-		//Define the preferred [mapped] base path; use the path of the current script
-		sPreferredBasePath = oContentMgr.getMappedPath( nDirType, sScriptPath, false );
-		
-		// Get the absolute path of the file to be shown/opened
-		sAbsolutePath = oContentMgr.getAbsolutePath( nDirType, sRelativePath, sPreferredBasePath );
-	// If the version is older than 4.8.1.51
-	} else {
-		// Define the preferred [mapped] base path; use the path of the current script
-		sPreferredBasePath = oContentMgr.getMappedPath( sScriptPath, true, false );
-		
-		// Get the absolute path of the file to be shown/opened
-		sAbsolutePath = oContentMgr.getAbsolutePath( sRelativePath, true, sPreferredBasePath );
+	var sDocumentName = sRelativePath.substring( sRelativePath.lastIndexOf( "/" ) + 1 );
+	var oScriptInfo = new DzFileInfo( sScriptPath );
+	var sLocalPath = oScriptInfo.path() + "/" + sDocumentName;
+	oScriptInfo.deleteLater();
+	var oLocalInfo = new DzFileInfo( sLocalPath );
+	var sPreferredBasePath, sAbsolutePath = "";
+	if( oLocalInfo.exists() && oLocalInfo.isReadable() &&
+		( typeof( oLocalInfo.isFile ) != "function" || oLocalInfo.isFile() ) ){
+		sAbsolutePath = sLocalPath;
 	}
-	
+	oLocalInfo.deleteLater();
+
+	// Retain the original mapped-content fallback and its version-aware overloads.
+	if( !sAbsolutePath.length ){
+		var oContentMgr = App.getContentMgr();
+		if( oContentMgr ){
+			// If the version is 4.8.1.51 or newer
+			if( App.version64 >= 0x0004000800010033 ){
+				// Define the directory type to look in
+				var nDirType = DzContentMgr.AllDirs;
+
+				// If the version is 4.9.0.51 or newer
+				if( App.version64 >= 0x0004000900000033 ){
+					// Also look in cloud directories
+					nDirType = DzContentMgr.AllDirsAndCloud;
+				}
+
+				//Define the preferred [mapped] base path; use the path of the current script
+				sPreferredBasePath = oContentMgr.getMappedPath( nDirType, sScriptPath, false );
+
+				// Get the absolute path of the file to be shown/opened
+				sAbsolutePath = oContentMgr.getAbsolutePath( nDirType, sRelativePath, sPreferredBasePath );
+			// If the version is older than 4.8.1.51
+			} else {
+				// Define the preferred [mapped] base path; use the path of the current script
+				sPreferredBasePath = oContentMgr.getMappedPath( sScriptPath, true, false );
+
+				// Get the absolute path of the file to be shown/opened
+				sAbsolutePath = oContentMgr.getAbsolutePath( sRelativePath, true, sPreferredBasePath );
+			}
+		}
+	}
+
 	// If the file was found
-	if( !sAbsolutePath.isEmpty() ){
+	if( sAbsolutePath.length ){
 		// Prompt the operating system to perform its default handling of the given file type
-		App.showURL( String("file:///%1").arg( sAbsolutePath ) );
+		App.showURL( localFileURL( sAbsolutePath ) );
 	// If the file was not found
 	} else {
 		// Inform the user
@@ -88,6 +104,6 @@
 				"Check the installation and try again.").arg( sRelativePath ),
 			text( "File Not Found" ), text( "&OK" ) );
 	}
-	
+
 // Finalize the function and invoke
 })( "Scripts/matew/Wearables Manager/Wearables Manager User Guide.pdf" );

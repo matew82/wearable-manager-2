@@ -43,53 +43,410 @@
 					DATA SETTINGS REMOVE QUEUE CLASS
 	\*-----------------------------------------------------------------*/
 	function RemoveQueueClass() {
-		function DataSettingRemoveQueueItem(oDataItem, oSettings, oKey) {
-			this.oDataItem = oDataItem;
-			this.oSettings = oSettings;
-			this.oKey = oKey;
-		}
-
 		this.arrDataSettingsItems = [];
 		this.arrFiles = [];
-
 		this.AddDataToQueue = function (oDataItem, oSettings, oKey) {
-			this.arrDataSettingsItems.push(new DataSettingRemoveQueueItem(oDataItem, oSettings, oKey));
+			for (var i = 0; i < this.arrDataSettingsItems.length; i++) {
+				var oItem = this.arrDataSettingsItems[i];
+				if (oItem.oDataItem == oDataItem && oItem.oKey == oKey) return;
+			}
+			this.arrDataSettingsItems.push({oDataItem: oDataItem, oSettings: oSettings, oKey: oKey});
 		}
-
-		this.AddFileToQueue = function (fFile) {
-			this.arrFiles.push(fFile);
-		}
-
+		this.AddFileToQueue = function (fFile) { this.arrFiles.push(fFile); }
 		this.Finalize = function () {
-			var n = this.arrDataSettingsItems.length;
-			for (var i = 0; i < n; i++) {
-				var cItem = this.arrDataSettingsItems[i];
-				var oSettings = cItem.oSettings;
-				oSettings.removeValue(cItem.oKey);
-				if (oSettings.getNumValues() == 0) {
-					var oData = cItem.oDataItem;
-					var oNode = oData.getOwner();
-					if (oNode) oNode.removeDataItem(oData);
+			var arrDataItems = [], arrSettings = [];
+			// Remove all queued fields before removing any native data-item owner.
+			for (var i = 0; i < this.arrDataSettingsItems.length; i++) {
+				var oItem = this.arrDataSettingsItems[i];
+				oItem.oSettings.removeValue(oItem.oKey);
+				if (arrDataItems.indexOf(oItem.oDataItem) < 0) { arrDataItems.push(oItem.oDataItem); arrSettings.push(oItem.oSettings); }
+			}
+			for (var i = 0; i < arrDataItems.length; i++) {
+				if (arrSettings[i].getNumValues() == 0) {
+					var oOwner = arrDataItems[i].getOwner();
+					if (oOwner) oOwner.removeDataItem(arrDataItems[i]);
 				}
 			}
-
-			var n = this.arrFiles.length;
-			for (var i = 0; i < n; i++) {
-				var fFile = this.arrFiles[i];
-				fFile.remove();
-				fFile.deleteLater();
-			}
-
-
+			// Retain sidecars while Undo can refer to them; release wrappers only.
+			for (var i = 0; i < this.arrFiles.length; i++) this.arrFiles[i].deleteLater();
 			this.Clear();
 		}
-
-		this.Clear = function () {
-			this.arrDataSettingsItems = [];
-			this.arrFiles = [];
-		}
+		this.Clear = function () { this.arrDataSettingsItems = []; this.arrFiles = []; }
 	}
 	var oRemoveQueue = new RemoveQueueClass();
+	var bWM2UndoOpen = false;
+
+	function WM2BeginUndo() {
+		if (bWM2UndoOpen) throw new Error("A Wearables Manager Undo operation is already open.");
+		beginUndo(); bWM2UndoOpen = true;
+	}
+
+	function WM2AcceptUndo(sLabel) {
+		if (!bWM2UndoOpen) return;
+		try { acceptUndo(sLabel); } finally { bWM2UndoOpen = false; }
+	}
+
+	function WM2CancelUndo() {
+		if (!bWM2UndoOpen) return;
+		try { cancelUndo(); } finally { bWM2UndoOpen = false; }
+	}
+
+	function WM2SnapshotPath(oSettings, sFileName) {
+		var sPath = oSettings ? oSettings.getStringValue("BackupPath", "") : "";
+		return sPath || (PATH_TEMP + sFileName + ".duf");
+	}
+
+	function WM2BackupDirectory() {
+		// New snapshots survive temporary-directory cleanup. Old snapshots retain their fallback.
+		var sPath = App.getAppDataPath() + "/matew/WearablesManager/Backups/";
+		var oDir = new DzDir(sPath);
+		try {
+			if (!oDir.exists() && !oDir.mkpath(sPath)) throw new Error("Unable to create the Wearables Manager backup directory: " + sPath);
+		} finally { oDir.deleteLater(); }
+		return sPath;
+	}
+
+	function WM2ReviewAndAdoptLegacyProxy(oGroup, oProxy, oHumanFigure) {
+		var oPrior = WM2ResolveBoneProxy(oGroup, oProxy, oHumanFigure);
+		if (oPrior.status !== "needs-migration") return oPrior;
+		// During restoration this belongs to the outer operation; during UI loading it owns a small block.
+		var bOwnUndo = !bWM2UndoOpen;
+		if (bOwnUndo) WM2BeginUndo();
+		try {
+			var oResult = WM2ReviewLegacyBoneProxy(oGroup, oProxy, oHumanFigure);
+			if (bOwnUndo) {
+				if (oResult.ok) WM2AcceptUndo("Wearables Manager - Review Legacy Storage");
+				else WM2CancelUndo();
+			}
+			return oResult;
+		} catch (e) { if (bOwnUndo) WM2CancelUndo(); throw e; }
+	}
+
+	function WM2ReferenceResult(bOK, sStatus, oNode, sMessage) {
+	    return { ok: bOK, status: sStatus, node: oNode || null, message: sMessage || "" };
+	}
+
+	function WM2NodeSettings(oNode, bCreate) {
+	    if (!oNode) return null;
+	    var oData = oNode.findDataItem(DATA_ITEM_NAME);
+	    if (!oData && bCreate) {
+	        oData = new DzSimpleElementData(DATA_ITEM_NAME, true);
+	        oNode.addDataItem(oData);
+	    }
+	    return oData ? oData.getSettings() : null;
+	}
+
+	function WM2SceneContains(oNode) {
+	    var arrNodes = Scene.getNodeList();
+	    for (var i = 0; i < arrNodes.length; i++) if (arrNodes[i] === oNode) return true;
+	    return false;
+	}
+
+	function WM2NodesWithValue(sKey, sValue) {
+	    var arrNodes = Scene.getNodeList();
+	    var arrMatches = [];
+	    if (!sValue) return arrMatches;
+	    for (var i = 0; i < arrNodes.length; i++) {
+	        var oSettings = WM2NodeSettings(arrNodes[i], false);
+	        if (oSettings && oSettings.getStringValue(sKey, "") === sValue) arrMatches.push(arrNodes[i]);
+	    }
+	    return arrMatches;
+	}
+
+	function WM2UniqueToken(sKey) {
+	    for (var i = 0; i < 10; i++) {
+	        var sID = "WM2_" + GenerateUniqueID(20);
+	        if (WM2NodesWithValue(sKey, sID).length === 0) return sID;
+	    }
+	    throw new Error("Unable to create a unique Wearables Manager identity.");
+	}
+
+	function WM2EnsureNodeID(oNode) {
+	    if (!oNode || !WM2SceneContains(oNode)) return WM2ReferenceResult(false, "missing", null, "Reference target is no longer in the scene.");
+	    var oSettings = WM2NodeSettings(oNode, false);
+	    var sID = oSettings ? oSettings.getStringValue("NodeID", "") : "";
+	    if (sID) {
+	        var arrMatches = WM2NodesWithValue("NodeID", sID);
+	        if (arrMatches.length !== 1 || arrMatches[0] !== oNode) return WM2ReferenceResult(false, "ambiguous", null, "Several scene nodes share a saved node identity.");
+	    } else {
+	        sID = WM2UniqueToken("NodeID");
+	        oSettings = WM2NodeSettings(oNode, true);
+	        if (!oSettings) return WM2ReferenceResult(false, "failed", null, "Unable to store a node identity.");
+	        oSettings.setStringValue("NodeID", sID);
+	    }
+	    var oResult = WM2ReferenceResult(true, "resolved", oNode, "");
+	    oResult.nodeID = sID;
+	    return oResult;
+	}
+
+	function WM2GetNodeReferenceKeys(sPrefix) {
+	    return [sPrefix, sPrefix + "_NodeID", sPrefix + "_Name", sPrefix + "_Label", sPrefix + "_Class"];
+	}
+
+	function WM2ResolveNodeReference(oSettings, sPrefix, sLegacyMode) {
+	    if (!oSettings) return WM2ReferenceResult(false, "failed", null, "Reference settings are unavailable.");
+	    var sID = oSettings.getStringValue(sPrefix + "_NodeID", "");
+	    var arrMatches;
+	    if (sID) {
+	        arrMatches = WM2NodesWithValue("NodeID", sID);
+	    } else {
+	        var sLegacy = oSettings.getStringValue(sPrefix, "");
+	        if (!sLegacy) return WM2ReferenceResult(true, "empty", null, "");
+	        arrMatches = [];
+	        var arrNodes = Scene.getNodeList();
+	        for (var i = 0; i < arrNodes.length; i++) {
+	            var sValue = sLegacyMode === "label" ? arrNodes[i].getLabel() : arrNodes[i].name;
+	            if (sValue === sLegacy) arrMatches.push(arrNodes[i]);
+	        }
+	    }
+	    if (arrMatches.length === 0) return WM2ReferenceResult(false, "missing", null, "The saved reference target is missing.");
+	    if (arrMatches.length !== 1) return WM2ReferenceResult(false, "ambiguous", null, "The saved reference matches several scene nodes.");
+	    var sClass = oSettings.getStringValue(sPrefix + "_Class", "");
+	    if (sClass && arrMatches[0].className() !== sClass) return WM2ReferenceResult(false, "wrong-class", null, "The saved reference has a different node type.");
+	    return WM2ReferenceResult(true, "resolved", arrMatches[0], "");
+	}
+
+	function WM2SaveNodeReference(oSettings, sPrefix, oTarget, sLegacyMode) {
+	    if (!oSettings || !oTarget) return WM2ReferenceResult(false, "missing", null, "Reference settings or target are unavailable.");
+	    if (oSettings.getStringValue(sPrefix + "_NodeID", "") || oSettings.getStringValue(sPrefix, "")) {
+	        var oExisting = WM2ResolveNodeReference(oSettings, sPrefix, sLegacyMode);
+	        if (!oExisting.ok) return oExisting;
+	        if (oExisting.node !== oTarget) return WM2ReferenceResult(false, "conflict", null, "An unresolved or different saved reference must be recovered before recording another target.");
+	    }
+	    var oIdentity = WM2EnsureNodeID(oTarget);
+	    if (!oIdentity.ok) return oIdentity;
+	    oSettings.setStringValue(sPrefix, sLegacyMode === "label" ? oTarget.getLabel() : oTarget.name);
+	    oSettings.setStringValue(sPrefix + "_NodeID", oIdentity.nodeID);
+	    oSettings.setStringValue(sPrefix + "_Name", oTarget.name);
+	    oSettings.setStringValue(sPrefix + "_Label", oTarget.getLabel());
+	    oSettings.setStringValue(sPrefix + "_Class", oTarget.className());
+	    return WM2ReferenceResult(true, "resolved", oTarget, "");
+	}
+
+	function WM2BoundPair(oSource) {
+	    var oSettings = WM2NodeSettings(oSource, false);
+	    var sID = oSettings ? oSettings.getStringValue(SETTINGS_ID, "") : "";
+	    if (!sID || !WM2SceneContains(oSource)) return { status: "missing", owner: null, group: null };
+	    var arrMatches = WM2NodesWithValue(SETTINGS_ID, sID);
+	    var arrOwners = [];
+	    var arrGroups = [];
+	    for (var i = 0; i < arrMatches.length; i++) {
+	        if (IsNodeHumanFigure(arrMatches[i])) arrOwners.push(arrMatches[i]);
+	        else if (arrMatches[i].className() === "DzGroupNode") arrGroups.push(arrMatches[i]);
+	    }
+	    if (arrOwners.length > 1 || arrGroups.length > 1) return { status: "ambiguous", owner: null, group: null };
+	    return { status: "resolved", owner: arrOwners.length === 1 ? arrOwners[0] : null, group: arrGroups.length === 1 ? arrGroups[0] : null };
+	}
+
+	function WM2IsBoneOfFigure(oBone, oFigure) {
+	    if (!oBone || !oBone.inherits("DzBone")) return false;
+	    var oNode = oBone;
+	    while (oNode && oNode.inherits("DzBone")) oNode = oNode.getNodeParent();
+	    return oNode === oFigure;
+	}
+
+	function WM2LegacyBoneMatches(oGroup, oProxy, oHumanFigure) {
+	    var arrMatches = [];
+	    if (!oGroup || !oProxy || !oHumanFigure || oProxy.className() !== "DzGroupNode") return arrMatches;
+	    var sPrefix = oGroup.name + "_";
+	    if (oProxy.name.indexOf(sPrefix) !== 0) return arrMatches;
+	    var sBoneName = oProxy.name.substring(sPrefix.length);
+	    var arrChildren = oHumanFigure.getNodeChildren(true);
+	    for (var i = 0; i < arrChildren.length; i++) {
+	        if (arrChildren[i].name === sBoneName && WM2IsBoneOfFigure(arrChildren[i], oHumanFigure)) arrMatches.push(arrChildren[i]);
+	    }
+	    return arrMatches;
+	}
+
+	function WM2ResolveBoneProxy(oGroup, oProxy, oHumanFigure) {
+	    if (!oGroup || !oProxy || !oHumanFigure || oProxy.getNodeParent() !== oGroup) return WM2ReferenceResult(false, "missing", null, "The storage child has moved or is missing.");
+	    var oSettings = WM2NodeSettings(oProxy, false);
+	    var sRole = oSettings ? oSettings.getStringValue("WM2Role", "") : "";
+	    if (sRole !== "BoneProxy") {
+	        var sPrefix = oGroup.name + "_";
+	        if (oProxy.className() === "DzGroupNode" && oProxy.name.indexOf(sPrefix) === 0) {
+	            var arrLegacy = WM2LegacyBoneMatches(oGroup, oProxy, oHumanFigure);
+	            return WM2ReferenceResult(false, "needs-migration", arrLegacy.length === 1 ? arrLegacy[0] : null, "An unmarked legacy bone group requires review before its children can be reparented.");
+	        }
+	        return WM2ReferenceResult(true, "not-proxy", null, "");
+	    }
+	    if (oProxy.className() !== "DzGroupNode") return WM2ReferenceResult(false, "wrong-class", null, "A marked bone proxy is not a group.");
+	    var oOwner = WM2ResolveNodeReference(oSettings, "WM2Owner", "name");
+	    if (!oOwner.ok) return oOwner;
+	    if (oOwner.node !== oHumanFigure) return WM2ReferenceResult(false, "wrong-owner", null, "The bone proxy belongs to another figure.");
+	    var oBone = WM2ResolveNodeReference(oSettings, "WM2Bone", "name");
+	    if (!oBone.ok) return oBone;
+	    if (!WM2IsBoneOfFigure(oBone.node, oHumanFigure)) return WM2ReferenceResult(false, "wrong-owner", null, "The saved bone no longer belongs to this figure.");
+	    return WM2ReferenceResult(true, "resolved", oBone.node, "");
+	}
+
+	function WM2MarkBoneProxy(oProxy, oHumanFigure, oBone) {
+	    if (!oProxy || oProxy.className() !== "DzGroupNode" || !WM2IsBoneOfFigure(oBone, oHumanFigure)) return WM2ReferenceResult(false, "wrong-class", null, "Invalid bone proxy or bone.");
+	    if (!WM2SceneContains(oProxy)) return WM2ReferenceResult(false, "missing", null, "The bone proxy is no longer in the scene.");
+	    var oOwnerID = WM2EnsureNodeID(oHumanFigure);
+	    if (!oOwnerID.ok) return oOwnerID;
+	    var oBoneID = WM2EnsureNodeID(oBone);
+	    if (!oBoneID.ok) return oBoneID;
+	    var oSettings = WM2NodeSettings(oProxy, true);
+	    var oOwner = WM2SaveNodeReference(oSettings, "WM2Owner", oHumanFigure, "name");
+	    if (!oOwner.ok) return oOwner;
+	    var oSavedBone = WM2SaveNodeReference(oSettings, "WM2Bone", oBone, "name");
+	    if (!oSavedBone.ok) return oSavedBone;
+	    oSettings.setStringValue("WM2Role", "BoneProxy");
+	    return WM2ReferenceResult(true, "resolved", oBone, "");
+	}
+
+	function WM2AdoptLegacyBoneProxy(oGroup, oProxy, oHumanFigure, oReviewedBone) {
+	    // Invoke only after the user explicitly confirms this particular legacy group.
+	    if (!oGroup || !oProxy || !oHumanFigure) return WM2ReferenceResult(false, "missing", null, "The reviewed legacy bone group is missing.");
+	    var arrMatches = WM2LegacyBoneMatches(oGroup, oProxy, oHumanFigure);
+	    if (oProxy.getNodeParent() !== oGroup || arrMatches.length !== 1 || arrMatches[0] !== oReviewedBone) return WM2ReferenceResult(false, "ambiguous", null, "The reviewed legacy bone group no longer matches the selected bone.");
+	    return WM2MarkBoneProxy(oProxy, oHumanFigure, oReviewedBone);
+	}
+
+	function WM2ReviewLegacyBoneProxy(oGroup, oProxy, oHumanFigure) {
+	    var oResult = WM2ResolveBoneProxy(oGroup, oProxy, oHumanFigure);
+	    if (oResult.status !== "needs-migration") return oResult;
+	    var arrMatches = WM2LegacyBoneMatches(oGroup, oProxy, oHumanFigure);
+	    if (arrMatches.length !== 1) return WM2ReferenceResult(false, arrMatches.length > 1 ? "ambiguous" : "missing", null, "The legacy storage group has no unique destination bone. Its items remain stored.");
+	    var oBone = arrMatches[0];
+	    var nItems = oProxy.getNodeChildren(false).length;
+	    var sMessage = "Review this legacy storage connection:\n\n" +
+	        "Storage group: " + oProxy.getLabel() + "\n" +
+	        "Figure: " + oHumanFigure.getLabel() + "\n" +
+	        "Destination bone: " + oBone.getLabel() + " (" + oBone.name + ")\n" +
+	        "Direct items in this group: " + nItems + "\n\n" +
+	        "Confirm that this group stores items for this bone. Use this bone records the connection for future restoration. Keep stored leaves this group pending. No items move during this review.";
+	    var nAnswer = MessageBox.warning(sMessage, "Wearables Manager 2 - Review legacy storage", "&Use this bone", "&Keep stored");
+	    if (nAnswer !== 0) return WM2ReferenceResult(false, "declined", null, "Legacy storage review was declined. Its items remain stored.");
+	    // Revalidate after the modal prompt; a reviewed node may have changed meanwhile.
+	    return WM2AdoptLegacyBoneProxy(oGroup, oProxy, oHumanFigure, oBone);
+	}
+
+	function WM2LoadItemsFromGroup(oManager, oHumanFigure, oGroup) {
+	    oManager.arrPendingStorageItems = [];
+	    if (!oGroup) return true;
+	    var arrChildren = oGroup.getNodeChildren(false);
+	    if (!arrChildren || arrChildren.length === 0) return true;
+	    for (var i = 0; i < arrChildren.length; i++) {
+	        var oWearable = arrChildren[i];
+	        var oProxy = WM2ReviewAndAdoptLegacyProxy(oGroup, oWearable, oHumanFigure);
+	        if (oProxy.status === "not-proxy" && oProxy.ok) {
+	            oManager.iAddItem(oWearable, oHumanFigure, true);
+	        } else if (oProxy.ok && oProxy.status === "resolved") {
+	            var arrProxyChildren = oWearable.getNodeChildren(false);
+	            for (var j = 0; j < arrProxyChildren.length; j++) oManager.iAddItem(arrProxyChildren[j], oProxy.node, true);
+	        } else {
+	            oManager.arrPendingStorageItems.push({ node: oWearable, status: oProxy.status, message: oProxy.message });
+	        }
+	    }
+	    return oManager.arrPendingStorageItems.length === 0;
+	}
+
+	// Storage recovery helpers: one operation, one pending record, no backup deletion.
+	function WM2ReadableBackup(fBackup) {
+		// DzFileInfo caches existence/size: refresh after saving a new candidate.
+		fBackup.refresh();
+		if (!fBackup.exists() || (typeof fBackup.isFile == "function" && !fBackup.isFile()) || fBackup.size() <= 0) return false;
+		if (!fBackup.open(DzFile.ReadOnly)) return false;
+		try { return true; } finally { fBackup.close(); }
+	}
+	function WM2CheckPendingShellSnapshot(oHumanFigure, oShellNode, oSettings) {
+		var oObject = oShellNode.getObject();
+		var oShape = oObject ? oObject.getCurrentShape() : null;
+		if (!oShape) return err("Shell shape is unavailable for " + oShellNode.getLabel() + ". Restore the pending wearables first.", false);
+		var arrLive = GetExtraMaterialsArray(oShape, GetHumanFigureMaterialsNames(oHumanFigure));
+		if (!arrLive) return true;
+		var sUVs = oSettings.getStringValue(SETTINGS_UVS, "");
+		var arrSaved = sUVs ? sUVs.split(ARRAY_SEPARATOR) : [];
+		if (arrSaved.length % 2) return err("Pending shell UV data is incomplete. Restore the pending wearables before removing more.", false);
+		for (var i = 0; i < arrLive.length; i++) {
+			var oUV = arrLive[i].getUVSetControl();
+			var bFound = false;
+			for (var j = 0; j < arrSaved.length; j += 2) {
+				if (arrSaved[j] == arrLive[i].name && oUV && arrSaved[j + 1] == oUV.getStringValue()) { bFound = true; break; }
+			}
+			if (!bFound) return err("Shell surfaces or UVs changed while recovery was pending. Restore the pending wearables before removing more.", false);
+		}
+		return true;
+	}
+	function WM2SaveShellSnapshots(oHumanFigure, arrShells) {
+		for (var i = 0; i < arrShells.length; i++) if (!SaveShellMaterialsInFile(oHumanFigure, arrShells[i])) return false;
+		return true;
+	}
+	function WM2CheckShellSnapshots(arrShells) {
+		for (var i = 0; i < arrShells.length; i++) {
+			var oData = arrShells[i].findDataItem(DATA_ITEM_NAME);
+			var oSettings = oData ? oData.getSettings() : null;
+			var sFileName = oSettings ? oSettings.getStringValue(SETTINGS_FILE_NAME, "") : "";
+			if (!sFileName) continue;
+			var fBackup = new DzFile(WM2SnapshotPath(oSettings, sFileName));
+			try { if (!WM2ReadableBackup(fBackup)) return err("Shell backup is missing, empty, or unreadable: " + WM2SnapshotPath(oSettings, sFileName) + ". Recovery remains pending.", false); }
+			finally { fBackup.deleteLater(); }
+		}
+		return true;
+	}
+	function WM2CheckShellUVMaterials(oNode, arrUVs) {
+		var oObject = oNode.getObject();
+		var oShape = oObject ? oObject.getCurrentShape() : null;
+		if (!oShape) return err("Shell shape is unavailable for " + oNode.getLabel() + ". Recovery remains pending.", false);
+		for (var i = 0; i < arrUVs.length; i += 2) {
+			var oMaterial = oShape.findMaterial(arrUVs[i]);
+			if (!oMaterial || !oMaterial.getUVSetControl()) return err("Shell surface " + arrUVs[i] + " is unavailable. Restore its related assets together. Recovery remains pending.", false);
+		}
+		return true;
+	}
+	function WM2QueueReferenceRemoval(oData, oSettings, sPrefix) {
+		var arrKeys = WM2GetNodeReferenceKeys(sPrefix);
+		for (var i = 0; i < arrKeys.length; i++) oRemoveQueue.AddDataToQueue(oData, oSettings, arrKeys[i]);
+	}
+	function WM2RestoreNodeState(oHumanFigure, arrNodes, arrShells) {
+		for (var i = 0; i < arrNodes.length; i++) {
+			if (arrNodes[i].inherits("DzSkeleton") && !RestoreNodeFollowTarget(arrNodes[i], oHumanFigure)) return false;
+		}
+		processEvents();
+		for (var i = 0; i < arrNodes.length; i++) if (!RestoreCollisionItem(arrNodes[i])) return false;
+		for (var i = 0; i < arrShells.length; i++) if (!RestoreMaterialsFromFile(arrShells[i])) return false;
+		return true;
+	}
+	function WM2RestoreWearablePairs(oHumanFigure, oGroup, arrPairs, arrShells) {
+	    if (!WM2CheckShellSnapshots(arrShells)) return false;
+	    if (!oGroup || !WM2SceneContains(oGroup)) return err("The selected storage group changed. Recovery remains pending.", false);
+	    // Validate every source ownership relation before moving the first item.
+	    for (var i = 0; i < arrPairs.length; i++) {
+	        var oWearable = arrPairs[i][0], oParent = arrPairs[i][1];
+	        if (!WM2SceneContains(oWearable) || !WM2SceneContains(oParent) || (oParent !== oHumanFigure && !WM2IsBoneOfFigure(oParent, oHumanFigure))) return err("A selected wearable or destination parent changed. Recovery remains pending.", false);
+	        var oCurrentParent = oWearable.getNodeParent();
+	        if (oParent === oHumanFigure) {
+	            if (oCurrentParent !== oGroup) return err("The stored parent changed for " + oWearable.getLabel() + ". Recovery remains pending.", false);
+	        } else {
+	            var oProxy = WM2ResolveBoneProxy(oGroup, oCurrentParent, oHumanFigure);
+	            if (!oProxy.ok || oProxy.status !== "resolved" || oProxy.node !== oParent) return err("The stored bone connection changed for " + oWearable.getLabel() + ". Recovery remains pending.", false);
+	        }
+	    }
+	    var arrNodes = [];
+	    for (var i = 0; i < arrPairs.length; i++) {
+	        var oWearable = arrPairs[i][0], oParent = arrPairs[i][1];
+	        var arrChildren = [oWearable].concat(oWearable.getNodeChildren(true));
+	        for (var j = 0; j < arrChildren.length; j++) if (arrNodes.indexOf(arrChildren[j]) < 0) arrNodes.push(arrChildren[j]);
+	        oParent.addNodeChild(oWearable);
+	        if (oWearable.getNodeParent() != oParent) return err("Parent recovery did not apply for " + oWearable.getLabel() + ".", false);
+	    }
+	    return WM2RestoreNodeState(oHumanFigure, arrNodes, arrShells);
+	}
+	function WM2RemoveEmptyStorageGroup(oGroup, oHumanFigure) {
+		if (!oGroup) return false;
+		var arrChildren = oGroup.getNodeChildren(false);
+		for (var i = 0; i < arrChildren.length; i++) {
+			var oChild = arrChildren[i];
+			if (!oChild.inherits("DzGroupNode") || oChild.getNodeChildren(false).length != 0) continue;
+			var oProxy = WM2ResolveBoneProxy(oGroup, oChild, oHumanFigure);
+			if (oProxy.ok && oProxy.status != "not-proxy") Scene.removeNode(oChild);
+		}
+		if (oGroup.getNodeChildren(false).length == 0) { Scene.removeNode(oGroup); return true; }
+		return false;
+	}
+
 
 
 	/*-----------------------------------------------------------------*\
@@ -102,6 +459,7 @@
 	if (oAnotherFigure) return err("Human figure '" + oAnotherFigure.getLabel() + "' is parented to " + oHumanFigure.getLabel() + ". This could potentially cause problems. Please unparent it before continuing.");
 
 	SetStatusBusy();
+	try {
 
 	if (bReturnBelongings) {
 		/*
@@ -112,7 +470,7 @@
 		/*
 		<------------ Move wearables into group ------------->
 		*/
-		beginUndo();
+		WM2BeginUndo();
 		var oGroup = GetBelongingsGroup(oHumanFigure, true);
 		var arrChildren = oHumanFigure.getNodeChildren(true);
 		var arrShells = arrChildren.filter(FilterShells); // get array with all geoshells
@@ -123,16 +481,25 @@
 
 
 		//save materials for Shells
-		for (var i = 0; i < arrShells.length; i++) SaveShellMaterialsInFile(oHumanFigure, arrShells[i]);
-		print("here-exit");
+		if (!WM2SaveShellSnapshots(oHumanFigure, arrShells)) {
+			oRemoveQueue.Clear(); WM2CancelUndo(); SetStatusFinished(); return;
+		}
 
 		//place wearables into groups
 		for (var i = 0; i < arrChildren.length; i++) PlaceWearableIntoGroup(oHumanFigure, arrChildren[i], oGroup);
 
-		acceptUndo("matew's Wearables - Return Belongings");
+		WM2AcceptUndo("matew's Wearables - Return Belongings");
 	}
 
 	SetStatusFinished();
+
+	} catch (e) {
+		oRemoveQueue.Clear();
+		WM2CancelUndo();
+		err("Wearables Manager stopped safely: " + String(e) + ". Pending recovery records were retained.", false);
+	} finally {
+		SetStatusFinished();
+	}
 
 	/*-----------------------------------------------------------------*\
 								   FUNCTIONS
@@ -141,29 +508,12 @@
 	//Function creatres and checks global variable g_matewWearablesStatus
 	//It doesn't allow to launch several matew's wearables scripts together - it could lead to losing data
 	function CheckForAnotherProcessActive() {
-		if (typeof g_matewWearablesStatus == 'undefined') {
+		if (typeof g_matewWearablesStatus == "undefined" || g_matewWearablesStatus <= 0) {
 			g_matewWearablesStatus = 0;
 			return true;
 		}
-
-		if (g_matewWearablesStatus <= 0) {
-			return true; // no backgroups process
-		} else if (g_matewWearablesStatus == 1) {
-			err("Please, let the previous matew's Wearables script finish before continuing.");
-			g_matewWearablesStatus++;
-			return false
-		} else {
-			// it's not the first time. It may happen that another scipt was finished with error and didn't reset the status variable
-			// let user fix the issue
-			var sMessage = "It looks like the previous matew's Wearables script hasn't finished yet. Launching multiple scripts simultaneously may lead to data loss.";
-			if (MessageBox.warning(sMessage, "matew's Wearables", "&Okay", "&It's a mistake. Let me continue.") == 0) {
-				return false;
-			} else {
-				g_matewWearablesStatus = 0;
-				return true;
-			}
-		}
-		return true;
+		err("Another Wearables Manager operation is active. Close its dialog or let it finish before continuing.", false);
+		return false;
 	}
 
 	function SetStatusFinished() {
@@ -177,42 +527,26 @@
 
 	function ReturnAllWearableToTheFigure(oHumanFigure) {
 		var oGroup = GetBelongingsGroup(oHumanFigure, false);
-		if (!oGroup) return;
-
-
-		beginUndo();
-		var arrGroupTopChildren = oGroup.getNodeChildren(false);
-		var arrGroupAllChildren = oGroup.getNodeChildren(true);
-		var arrSkeletons = oGroup.getNodeChildren(true).filter(FilterSkeletons);
+		if (!oGroup) return true;
+		var arrTop = oGroup.getNodeChildren(false);
+		var arrAll = oGroup.getNodeChildren(true);
 		var arrShells = GetAllShells(oHumanFigure, oGroup, false);
-
-		//restore follow targets
-		for (var i = 0; i < arrSkeletons.length; i++) RestoreNodeFollowTarget(arrSkeletons[i], oHumanFigure);
-
-		processEvents();
-
-		//restore shells materials
-		for (var i = 0; i < arrShells.length; i++) {
-			if (!RestoreMaterialsFromFile(arrShells[i])) {
-				oRemoveQueue.Clear();
-				cancelUndo();
-				return;
+		// Check sidecars before any parenting/FitTo change.
+		if (!WM2CheckShellSnapshots(arrShells)) return false;
+		WM2BeginUndo();
+		try {
+			for (var i = 0; i < arrTop.length; i++) {
+				if (!ReturnWearable(oHumanFigure, arrTop[i], oGroup)) { oRemoveQueue.Clear(); WM2CancelUndo(); return false; }
 			}
+			if (!WM2RestoreNodeState(oHumanFigure, arrAll, arrShells)) { oRemoveQueue.Clear(); WM2CancelUndo(); return false; }
+			oRemoveQueue.Finalize();
+			WM2RemoveEmptyStorageGroup(oGroup, oHumanFigure);
+			WM2AcceptUndo("matew's Wearables - Return Belongings");
+			return true;
+		} catch (e) {
+			oRemoveQueue.Clear(); WM2CancelUndo();
+			return err("Wearables recovery stopped: " + String(e) + ". Stored recovery records were retained.", false);
 		}
-
-		//return wearables to the human figure
-		for (var i = 0; i < arrGroupTopChildren.length; i++) ReturnWearable(oHumanFigure, arrGroupTopChildren[i], oGroup);
-
-		//restore collision items
-        for (var i = 0; i < arrGroupAllChildren.length; i++) {
-            var oWearable = arrGroupAllChildren[i];
-            RestoreCollisionItem(oWearable);
-        }
-
-		oRemoveQueue.Finalize();
-
-		Scene.removeNode(oGroup);
-		acceptUndo("matew's Wearables - Return Belongings");
 	}
 
 
@@ -231,84 +565,64 @@
 	}
 
 	function PlaceWearableIntoGroup(oHumanFigure, oWearable, oGroup) {
-		//Unfit from the human figure
+		if (!WM2SceneContains(oWearable) || !WM2SceneContains(oHumanFigure) || !WM2SceneContains(oGroup)) throw new Error("A wearable, figure, or storage group is no longer in the scene.");
+		var oParent = oWearable.getNodeParent();
+		if (oParent !== oHumanFigure && !WM2IsBoneOfFigure(oParent, oHumanFigure)) throw new Error("The wearable's parent changed before transfer.");
 		if (oWearable.inherits("DzSkeleton")) {
 			var oTarget = oWearable.getFollowTarget();
 			if (oTarget) {
-				AddStringDataToNode(oWearable, DATA_ITEM_NAME, SETTINGS_TARGET, oTarget.name);
-                SaveCollisionItem(oHumanFigure, oWearable);
+				var oSaved = WM2SaveNodeReference(WM2NodeSettings(oWearable, true), SETTINGS_TARGET, oTarget, "name");
+				if (!oSaved.ok) throw new Error("Cannot record FitTo recovery: " + oSaved.message);
+				if (!SaveCollisionItem(oHumanFigure, oWearable)) throw new Error("Collision recovery could not be recorded.");
 				oWearable.setFollowTarget(null);
+				if (oWearable.getFollowTarget()) throw new Error("FitTo did not detach for " + oWearable.getLabel() + ".");
 			}
 		}
-
-		//unparent fron the human figure
-		var oParent = oWearable.getNodeParent();
-		if (oParent.name != oHumanFigure.name) {
-			//parented to one of the bones - need to create additional gruop for the bone
-			ParentToBoneGroup(oParent, oWearable);
-		} else {
-			//parented to the root of the human figure
-			oGroup.addNodeChild(oWearable);
-		}
+		if (oParent === oHumanFigure) oGroup.addNodeChild(oWearable);
+		else ParentToBoneGroup(oParent, oWearable);
+		if (oWearable.getNodeParent() === oParent) throw new Error("The wearable did not move into storage.");
 	}
 
 	function SaveCollisionItem(oHumanFigure, oWearable) {
-		var oHelper = DzSceneHelper();
-		var oCollisionNode = null;
-		var oCollisionProp = oHelper.findPropertyByInternalName("Collision Item", oWearable);
-		if (oCollisionProp) oCollisionNode = oCollisionProp.getValue();
-		if (!oCollisionNode) return;
-        if (oCollisionNode == oHumanFigure) return; //no need to save the human figure as a collision item
-
-		var oData = oWearable.findDataItem(DATA_ITEM_NAME);
-        if (!oData) {
-            oData = new DzSimpleElementData(DATA_ITEM_NAME, true);
-            oWearable.addDataItem(oData);
-		}
-
-		var oDataSettings = oData.getSettings();
-		if (!oDataSettings) return
-
-		oDataSettings.setStringValue(SETTINGS_COLLISION_ITEM, oCollisionNode.getLabel());
+		var oHelper = new DzSceneHelper();
+		var oProp = oHelper.findPropertyByInternalName("Collision Item", oWearable);
+		var oTarget = oProp ? oProp.getValue() : null;
+		if (!oTarget || oTarget === oHumanFigure) return true;
+		var oResult = WM2SaveNodeReference(WM2NodeSettings(oWearable, true), SETTINGS_COLLISION_ITEM, oTarget, "label");
+		return oResult.ok ? true : err("Cannot record collision recovery for " + oWearable.getLabel() + ": " + oResult.message, false);
 	}
 
-    function RestoreCollisionItem(oWearable) {
-        var oData = oWearable.findDataItem(DATA_ITEM_NAME);
-        if (!oData) return;
-        var oSettings = oData.getSettings();
-        var sCollisionItem = oSettings.getStringValue(SETTINGS_COLLISION_ITEM, "");
-        if (!sCollisionItem) return;
-        oRemoveQueue.AddDataToQueue(oData, oSettings, SETTINGS_COLLISION_ITEM);
-        //oSettings.removeValue(SETTINGS_COLLISION_ITEM);
-		var oCollisionNode = Scene.findNodeByLabel(sCollisionItem, true);
-        if (!oCollisionNode) return;
-        var oHelper = DzSceneHelper();
-        var oCollisionProp = oHelper.findPropertyByInternalName("Collision Item", oWearable);
-        if (oCollisionProp) {
-            oCollisionProp.setValue(oCollisionNode);
-            return;
-        }
-        err("Unable to restore collision item for " + oWearable.name + ". Please, manually set the collision item in the parameters tab.");
-    }
+	function RestoreCollisionItem(oWearable) {
+		var oData = oWearable.findDataItem(DATA_ITEM_NAME);
+		if (!oData) return true;
+		var oSettings = oData.getSettings();
+		if (!oSettings) return err("Collision recovery settings are unavailable for " + oWearable.getLabel() + ".", false);
+		if (!oSettings.getStringValue(SETTINGS_COLLISION_ITEM, "") && !oSettings.getStringValue(SETTINGS_COLLISION_ITEM + "_NodeID", "")) return true;
+		var oResolved = WM2ResolveNodeReference(oSettings, SETTINGS_COLLISION_ITEM, "label");
+		if (!oResolved.ok) return err("Collision recovery remains pending for " + oWearable.getLabel() + ": " + oResolved.message, false);
+		var oHelper = new DzSceneHelper();
+		var oCollisionProp = oHelper.findPropertyByInternalName("Collision Item", oWearable);
+		if (!oCollisionProp) return err("Collision property is unavailable for " + oWearable.getLabel() + ". Recovery remains pending.", false);
+		oCollisionProp.setValue(oResolved.node);
+		if (oCollisionProp.getValue() != oResolved.node) return err("Collision recovery did not apply for " + oWearable.getLabel() + ".", false);
+		WM2QueueReferenceRemoval(oData, oSettings, SETTINGS_COLLISION_ITEM);
+		return true;
+	}
 
 	function ReturnWearable(oHumanFigure, oWearable, oGroup) {
-		if (oWearable.inherits("DzGroupNode")) {
-			var sgName = oWearable.name;
-			if (sgName.startsWith(oGroup.name + "_")) {
-				//bone group - need to parent its children to the bone
-				var obgChildren = oWearable.getNodeChildren(false);
-				if (!obgChildren) return;
-
-				var sBoneName = sgName.substring(oGroup.name.length + 1);
-				var oBone = oHumanFigure.findNodeChild(sBoneName, true);
-				if (!oBone) return;
-
-				for (var j = obgChildren.length - 1; j >= 0; j--) oBone.addNodeChild(obgChildren[j]);
-				return;
+		var oResolved = WM2ReviewAndAdoptLegacyProxy(oGroup, oWearable, oHumanFigure);
+		if (oResolved.status != "not-proxy") {
+			if (!oResolved.ok) return err("Parent recovery remains pending for " + oWearable.getLabel() + ": " + oResolved.message, false);
+			var arrChildren = oWearable.getNodeChildren(false);
+			for (var i = arrChildren.length - 1; i >= 0; i--) {
+				oResolved.node.addNodeChild(arrChildren[i]);
+				if (arrChildren[i].getNodeParent() != oResolved.node) return err("Parent recovery did not apply for " + arrChildren[i].getLabel() + ".", false);
 			}
+			// Keep the empty proxy alive until captured descendants finish restoration.
+			return true;
 		}
-
 		oHumanFigure.addNodeChild(oWearable);
+		return oWearable.getNodeParent() == oHumanFigure;
 	}
 	function FilterSkeletons(oNode) {
 		if (!oNode) return false;
@@ -322,72 +636,58 @@
 
 	function RestoreNodeFollowTarget(oNode, oHumanFigure) {
 		var oData = oNode.findDataItem(DATA_ITEM_NAME);
-		if (!oData) return;
+		if (!oData) return true;
 		var oSettings = oData.getSettings();
-		var sTarget = oSettings.getStringValue(SETTINGS_TARGET, "");
-		if (!sTarget) return;
-		oRemoveQueue.AddDataToQueue(oData, oSettings, SETTINGS_TARGET)
-		//oSettings.removeValue(SETTINGS_TARGET);
-		if (sTarget == oHumanFigure.name) {
-			oNode.setFollowTarget(oHumanFigure);
-			return;
-		}
-		var oTarget = oHumanFigure.findNodeChild(sTarget);
-		if (!oTarget) return;
-		oNode.setFollowTarget(oTarget);
+		if (!oSettings) return err("FitTo recovery settings are unavailable for " + oNode.getLabel() + ".", false);
+		if (!oSettings.getStringValue(SETTINGS_TARGET, "") && !oSettings.getStringValue(SETTINGS_TARGET + "_NodeID", "")) return true;
+		var oResolved = WM2ResolveNodeReference(oSettings, SETTINGS_TARGET, "name");
+		if (!oResolved.ok) return err("FitTo recovery remains pending for " + oNode.getLabel() + ": " + oResolved.message, false);
+		oNode.setFollowTarget(oResolved.node);
+		if (oNode.getFollowTarget() != oResolved.node) return err("FitTo recovery did not apply for " + oNode.getLabel() + ".", false);
+		WM2QueueReferenceRemoval(oData, oSettings, SETTINGS_TARGET);
+		return true;
 	}
 
 	function RestoreMaterialsFromFile(oNode) {
 		var oData = oNode.findDataItem(DATA_ITEM_NAME);
 		if (!oData) return true;
 		var oDataSettings = oData.getSettings();
-		if (!oDataSettings) return true;
+		if (!oDataSettings) return err("Shell recovery settings are unavailable for " + oNode.getLabel() + ".", false);
 		var sFileName = oDataSettings.getStringValue(SETTINGS_FILE_NAME, "");
-		//if (sFileName) oDataSettings.removeValue(SETTINGS_FILE_NAME);
-		if (sFileName) oRemoveQueue.AddDataToQueue(oData, oDataSettings, SETTINGS_FILE_NAME);
-
 		var sUVs = oDataSettings.getStringValue(SETTINGS_UVS, "");
-		//if (sUVs) oDataSettings.removeValue(SETTINGS_UVS);
-		if (sFileName) oRemoveQueue.AddDataToQueue(oData, oDataSettings, SETTINGS_UVS);
-		//");
-
-		if (!sFileName) return true;
-		var sPath = PATH_TEMP + sFileName + ".duf";
+		if (!sFileName) return sUVs ? err("Shell recovery has UV values but no backup filename for " + oNode.getLabel() + ".", false) : true;
+		var sPath = WM2SnapshotPath(oDataSettings, sFileName);
 		var fMaterial = new DzFile(sPath);
-		if (!fMaterial.exists()) return err("File + '" + sPath + "' + doesn't exist.", true);
-
-		var oContentMgr = App.getContentMgr();
-		beginNodeSelectionHold();
-		Scene.selectAllNodes(false);
-		Scene.setPrimarySelection(oNode);
-		oContentMgr.openFile(sPath, true);
-		restoreNodeSelectionHold();
-
-		if (sUVs) {
-			//update UVs
-			var oObj = oNode.getObject();
-			var oShape = oObj.getCurrentShape();
-
-			var arrUVs = sUVs.split(ARRAY_SEPARATOR);
+		try {
+			if (!WM2ReadableBackup(fMaterial)) return err("Shell backup is missing, empty, or unreadable: " + sPath + ". Recovery remains pending.", false);
+			var arrUVs = sUVs ? sUVs.split(ARRAY_SEPARATOR) : [];
+			if (arrUVs.length % 2) return err("Shell recovery UV data is incomplete for " + oNode.getLabel() + ".", false);
+			if (!WM2CheckShellUVMaterials(oNode, arrUVs)) return false;
+			var bLoaded = false;
+			beginNodeSelectionHold();
+			try {
+				Scene.selectAllNodes(false);
+				Scene.setPrimarySelection(oNode);
+				bLoaded = App.getContentMgr().openFile(sPath, true);
+			} finally { restoreNodeSelectionHold(); }
+			if (!bLoaded) return err("Shell backup could not be applied: " + sPath + ". Recovery remains pending.", false);
+			if (!WM2CheckShellUVMaterials(oNode, arrUVs)) return false;
+			var oObject = oNode.getObject();
+			var oShape = oObject ? oObject.getCurrentShape() : null;
 			for (var i = 0; i < arrUVs.length; i += 2) {
-				var sMaterialName = arrUVs[i];
-				var sUVvalue = arrUVs[i + 1];
-				var oMaterial = oShape.findMaterial(sMaterialName);
-
-				if (!oMaterial) {
-					err("Error: Unable to locate geoshell materials. This issue often arises when surface-creating assets, typically those representing breasts or genitalia, are separated. Please ensure all related assets are moved together.\nFor more information, refer to the 'Known Issues Chapter' in the manual.");
-					//processEvents();
-					return false;
-				}
-
-				var oUVprop = oMaterial.getUVSetControl();
-				oUVprop.setValueFromString(sUVvalue);
+				var oMaterial = oShape.findMaterial(arrUVs[i]);
+				var oUVControl = oMaterial.getUVSetControl();
+				if (!oUVControl.setValueFromString(arrUVs[i + 1]) || oUVControl.getStringValue() != arrUVs[i + 1]) return err("Shell UV recovery did not apply for surface " + arrUVs[i] + ". Recovery remains pending.", false);
 			}
-		}
-
-
-		oRemoveQueue.AddFileToQueue(fMaterial);
-		return true
+			// Acknowledge only after the preset and every saved UV were applied.
+			oRemoveQueue.AddDataToQueue(oData, oDataSettings, SETTINGS_FILE_NAME);
+			oRemoveQueue.AddDataToQueue(oData, oDataSettings, "BackupPath");
+			oRemoveQueue.AddDataToQueue(oData, oDataSettings, SETTINGS_UVS);
+			// Keep the physical sidecar for Undo and retry. Temp cleanup is deferred.
+			return true;
+		} catch (e) {
+			return err("Shell recovery failed for " + oNode.getLabel() + ": " + String(e), false);
+		} finally { fMaterial.deleteLater(); }
 	}
 
 	function GenerateUniqueGroupFileName(oFigure) {
@@ -407,172 +707,88 @@
 	}
 
 	function BindHumanFigureToGroup(oHumanFigure, oGroup) {
-		var oFigData = oHumanFigure.findDataItem(DATA_ITEM_NAME);
-		if (!oFigData) {
-			oFigData = new DzSimpleElementData(DATA_ITEM_NAME, true);
-			oHumanFigure.addDataItem(oFigData);
-		}
-
-		var oFigDataSettings = oFigData.getSettings();
-		var sID = oFigDataSettings.getStringValue(SETTINGS_ID, "");
-
-		if (!sID) {
-			sID = GenerateUniqueID();
-			oFigDataSettings.setStringValue(SETTINGS_ID, sID);
-		}
-
-		var oGroupData = oGroup.findDataItem(DATA_ITEM_NAME);
-		if (!oGroupData) {
-			oGroupData = new DzSimpleElementData(DATA_ITEM_NAME, true);
-			oGroup.addDataItem(oGroupData);
-		}
-
-		var oGroupDataSettings = oGroupData.getSettings();
-		oGroupDataSettings.setStringValue(SETTINGS_ID, sID);
+	    if (!oHumanFigure || !IsNodeHumanFigure(oHumanFigure) || !oGroup || oGroup.className() !== "DzGroupNode") throw new Error("Invalid figure or storage group.");
+	    if (!WM2SceneContains(oHumanFigure) || !WM2SceneContains(oGroup)) throw new Error("The figure or storage group is no longer in the scene.");
+	    var oFigureSettings = WM2NodeSettings(oHumanFigure, true);
+	    var oGroupSettings = WM2NodeSettings(oGroup, true);
+	    var sID = oFigureSettings.getStringValue(SETTINGS_ID, "");
+	    var sGroupID = oGroupSettings.getStringValue(SETTINGS_ID, "");
+	    if (sGroupID && sGroupID !== sID) throw new Error("The storage group already belongs to another figure.");
+	    if (sID) {
+	        var arrMatches = WM2NodesWithValue(SETTINGS_ID, sID);
+	        for (var i = 0; i < arrMatches.length; i++) {
+	            if (arrMatches[i] !== oHumanFigure && arrMatches[i] !== oGroup) throw new Error("The saved figure binding is ambiguous.");
+	        }
+	    } else {
+	        sID = WM2UniqueToken(SETTINGS_ID);
+	    }
+	    oFigureSettings.setStringValue(SETTINGS_ID, sID);
+	    oGroupSettings.setStringValue(SETTINGS_ID, sID);
 	}
 
 	function SaveShellMaterialsInFile(oHumanFigure, oShellNode) {
-		// Get the asset IO manager
+		// Keep the original backup while any removal using it is still pending.
+		var oPendingData = oShellNode.findDataItem(DATA_ITEM_NAME);
+		var oPendingSettings = oPendingData ? oPendingData.getSettings() : null;
+		var sPendingFile = oPendingSettings ? oPendingSettings.getStringValue(SETTINGS_FILE_NAME, "") : "";
+		if (sPendingFile) {
+			var fPending = new DzFile(WM2SnapshotPath(oPendingSettings, sPendingFile));
+			try {
+				if (!WM2ReadableBackup(fPending)) return err("The original shell backup is missing, empty, or unreadable: " + WM2SnapshotPath(oPendingSettings, sPendingFile) + ". No wearables were moved.", false);
+				if (!WM2CheckPendingShellSnapshot(oHumanFigure, oShellNode, oPendingSettings)) return false;
+				return true;
+			} finally { fPending.deleteLater(); }
+		}
+		var oObject = oShellNode.getObject();
+		if (!oObject) return err("Cannot back up shell " + oShellNode.getLabel() + ": no object.", false);
+		var oShape = oObject.getCurrentShape();
+		if (!oShape) return err("Cannot back up shell " + oShellNode.getLabel() + ": no shape.", false);
+		var aExtraMaterials = GetExtraMaterialsArray(oShape, GetHumanFigureMaterialsNames(oHumanFigure));
+		if (!aExtraMaterials) return true;
 		var oAssetIOMgr = App.getAssetIOMgr();
 		var nAssetIOFilter = oAssetIOMgr.findAssetFilterIndex("DzMaterialAssetFilter");
-		// If we did not find an asset filter with the class name we wanted
-		if (nAssetIOFilter < 0) return err("An asset filter with the class name DzMaterialAssetFilter could not be found.");
-
-		// Get the asset filter at the prescribed index
+		if (nAssetIOFilter < 0) return err("The DzMaterialAssetFilter is unavailable. No wearables were moved.", false);
 		var oAssetIOFilter = oAssetIOMgr.getAssetFilter(nAssetIOFilter);
-		if (!oAssetIOFilter) return err("An asset filter with the class name DzMaterialAssetFilter could not be found.");
-
-		// Get the default settings
-		var oSettings = new DzFileIOSettings();
-		oAssetIOFilter.getDefaultOptions(oSettings);
-
-		if (!oAssetIOFilter.getOptions(oSettings, false, "")) return
-
-		// Set the initial state of whether or not to exclude material definitions
-		oSettings.setBoolValue("OmitDefinitions", false);
-		// Set the label of the root node to find it in the scene; this can be used to override selection within the scene
-		oSettings.setStringValue("RootLabel", oShellNode.getLabel());
-
-		// Define an explicit list of material names
-		var aMaterialNames = ["Arms", "Ears", "Face", "Legs", "Torso"];
-		// Define an explicit list of property names
-		var aPropertyNames = [["Diffuse Color", "Value"], ["Diffuse Strength", "Value"]];
-
-		// Clear the lists
-		aMaterialNames = [];
-		aPropertyNames = [];
-
-		// Define an list of property group paths to include
-		var aPropertyBasePaths = [];
-
-		// Define whether to include property attributes
-		var bIncludeValue = true;
-		var bIncludeImage = true;
-
-		// Get the object for the node
-		var oObject = oShellNode.getObject();
-		// If we do not have an object
-		if (!oObject) {
-			// We are done..
-			return;
-		}
-
-		// Get the current shape for the object
-		var oShape = oObject.getCurrentShape();
-		// If we do not have a shape
-		if (!oShape) {
-			// We are done..
-			return;
-		}
-
-
-		aExtraMaterials = GetExtraMaterialsArray(oShape, GetHumanFigureMaterialsNames(oHumanFigure));
-		if (!aExtraMaterials) return;
-		aMaterials = oShape.getAllMaterials();
-
-		// Declare working variables
-		var oMaterial, oProperty;
-		var aProps;
-		var sPath;
-		var bHasProp;
-		var vProp;
-
-		// Iterate over the materials
-		for (var i = 0; i < aMaterials.length; i += 1) {
-			// Get the 'current' material
-			oMaterial = aMaterials[i];
-
-			// Initialize
-			bHasProp = false;
-
-			// Get the properties associated with the material
-			aProps = getElementProperties(oMaterial, true, true);
-			// Iterate over the properties
-			for (var j = 0; j < aProps.length; j += 1) {
-				// Get the 'current' property
-				oProperty = aProps[j];
-
-				// Initialize
-				vProp = undefined;
-
-				// If we are filtering by group
-				if (aPropertyBasePaths.length > 0) {
-					// Get the group path
-					sPath = oProperty.getPath();
-
-					// Iterate over base paths
-					for (var k = 0; k < aPropertyBasePaths.length; k += 1) {
-						// If this prop resides within
-						if (sPath.startsWith(aPropertyBasePaths[k])) {
-							// Get the property entry
-							vProp = getPropertyEntry(oProperty, bIncludeValue, bIncludeImage);
-
-							// We are done...
-							break;
-						}
-					}
-					// If we are not filtering
-				} else {
-					// Get the property entry
-					vProp = getPropertyEntry(oProperty, bIncludeValue, bIncludeImage);
+		if (!oAssetIOFilter) return err("The DzMaterialAssetFilter is unavailable. No wearables were moved.", false);
+		var fCandidate = null;
+		try {
+			var oSettings = new DzFileIOSettings();
+			oAssetIOFilter.getDefaultOptions(oSettings);
+			if (!oAssetIOFilter.getOptions(oSettings, false, "")) return err("Shell backup options could not be prepared. No wearables were moved.", false);
+			oSettings.setBoolValue("OmitDefinitions", false);
+			oSettings.setStringValue("RootLabel", oShellNode.getLabel());
+			var aMaterials = oShape.getAllMaterials();
+			for (var i = 0; i < aMaterials.length; i++) {
+				var oMaterial = aMaterials[i];
+				var aPropertyNames = [];
+				var aProps = getElementProperties(oMaterial, true, true);
+				for (var j = 0; j < aProps.length; j++) {
+					var vProp = getPropertyEntry(aProps[j], true, true);
+					if (vProp) aPropertyNames.push(vProp);
 				}
-
-				// If we have a property entry
-				if (vProp) {
-					// Append it to our list
-					aPropertyNames.push(vProp);
-					// Update our flag
-					bHasProp = true;
-				}
+				// Apply each material's own entries once; preserve Value/Image options.
+				if (aPropertyNames.length) setMaterialPropertyOptions(oSettings, oMaterial.name, aPropertyNames);
 			}
-
-			// If we have a reason to include the material
-			if (bHasProp) {
-				// Append its name to the list
-				aMaterialNames.push(oMaterial.name);
-			}
+			oSettings.setBoolValue("BypassFilter", false);
+			oSettings.setBoolValue("CompressOutput", false);
+			oSettings.setBoolValue("RunSilent", true);
+			var sFileName = GenerateUniqueGroupFileName(oShellNode);
+			var sBackupDirectory = WM2BackupDirectory();
+			var sFilePath = sBackupDirectory + sFileName;
+			fCandidate = new DzFile(sFilePath + ".duf");
+			if (fCandidate.exists()) return err("A shell backup filename is already in use. Please retry. No wearables were moved.", false);
+			var sUVs = GetSerializedUVs(aExtraMaterials);
+			var nSaveError = oAssetIOMgr.doSaveWithOptions(oAssetIOFilter, oSettings, true, sFilePath, sBackupDirectory, "");
+			// DzAssetIOMgr returns DzError: DZ_NO_ERROR is numeric zero.
+			if (nSaveError !== 0 || !WM2ReadableBackup(fCandidate)) return err("Shell backup failed for " + oShellNode.getLabel() + " (DzError " + nSaveError + "). No wearables were moved.", false);
+			AddStringDataToNodeEx(oShellNode, DATA_ITEM_NAME, [[SETTINGS_FILE_NAME, sFileName], [SETTINGS_UVS, sUVs], ["BackupPath", sFilePath + ".duf"]]);
+			return true;
+		} catch (e) {
+			return err("Shell backup failed for " + oShellNode.getLabel() + ": " + String(e), false);
+		} finally {
+			if (fCandidate) fCandidate.deleteLater();
+			oAssetIOFilter.deleteLater();
 		}
-
-		// Set common property options for multiple muterials
-		setCommonMaterialPropertyOptions(oSettings, aMaterialNames, aPropertyNames);
-
-		oSettings.setBoolValue("BypassFilter", false);
-		oSettings.setBoolValue("CompressOutput", false);
-		oSettings.setBoolValue("RunSilent", true);
-
-		// Construct the name of the file to save to; omit file extension
-		var sFileName = GenerateUniqueGroupFileName(oShellNode);
-		var sFilePath = PATH_TEMP + sFileName;
-
-		AddStringDataToNodeEx(oShellNode, DATA_ITEM_NAME, [[SETTINGS_FILE_NAME, sFileName], [SETTINGS_UVS, GetSerializedUVs(aExtraMaterials)]]);
-		var nn = Scene.getPrimarySelection();
-		print(nn.getLabel());
-
-		// Use the asset manager to save a file, using the filter and defined settings
-		oAssetIOMgr.doSaveWithOptions(oAssetIOFilter, oSettings, true, sFilePath, PATH_TEMP, "");
-		print("here2");
-		// Clean up; do not leak memory
-		oAssetIOFilter.deleteLater();
 	}
 	function AddStringDataToNodeEx(oNode, sDataName, arrSettingsValuePairs) {
 		if (!arrSettingsValuePairs) return;
@@ -639,49 +855,17 @@
 	}
 
 	function FindBoundGroup(oHumanFigure) {
-		var oFigData = oHumanFigure.findDataItem(DATA_ITEM_NAME);
-		if (!oFigData) return false;
-		var oFigDataSettings = oFigData.getSettings();
-		var sID = oFigDataSettings.getStringValue(SETTINGS_ID, "");
-		if (!sID) return false;
-
-		var arrNodes = Scene.getNodeList();
-		for (var i = 0; i < arrNodes.length; i++) {
-			var oGroup = arrNodes[i];
-			if (oGroup.className() != "DzGroupNode") continue;
-			//this is a group
-			var oGroupData = oGroup.findDataItem(DATA_ITEM_NAME);
-			if (!oGroupData) continue;
-
-			var oGroupDataSettings = oGroupData.getSettings();
-			var sGroupID = oGroupDataSettings.getStringValue(SETTINGS_ID, "");
-			if (sID != sGroupID) continue;
-			return oGroup; //found
-		}
-		return false;
+	    if (!oHumanFigure || !IsNodeHumanFigure(oHumanFigure)) return false;
+	    var oPair = WM2BoundPair(oHumanFigure);
+	    if (oPair.status === "ambiguous") throw new Error("Several figures or storage groups share this Wearables Manager binding. Recover the binding before transferring wearables.");
+	    return oPair.owner === oHumanFigure && oPair.group ? oPair.group : false;
 	}
 
 	function FindBoundFigure(oGroup) {
-		var oFigData = oGroup.findDataItem(DATA_ITEM_NAME);
-		if (!oFigData) return false;
-		var oFigDataSettings = oFigData.getSettings();
-		var sID = oFigDataSettings.getStringValue(SETTINGS_ID, "");
-		if (!sID) return false;
-
-		var arrNodes = Scene.getNodeList();
-		for (var i = 0; i < arrNodes.length; i++) {
-			var oFigure = arrNodes[i];
-			if (oFigure.elementID == sID) continue;
-
-			var oFigureData = oFigure.findDataItem(DATA_ITEM_NAME);
-			if (!oFigureData) continue;
-
-			var oFigureDataSettings = oFigureData.getSettings();
-			var sGroupID = oFigureDataSettings.getStringValue(SETTINGS_ID, "");
-			if (sID != sGroupID) continue;
-			return oFigure; //found
-		}
-		return false;
+	    if (!oGroup || oGroup.className() !== "DzGroupNode") return false;
+	    var oPair = WM2BoundPair(oGroup);
+	    if (oPair.status === "ambiguous") throw new Error("Several figures or storage groups share this Wearables Manager binding. Recover the binding before transferring wearables.");
+	    return oPair.group === oGroup && oPair.owner && oPair.owner !== oGroup ? oPair.owner : false;
 	}
 
 
@@ -729,41 +913,48 @@
 	//Get/Create a group to place nodes that were parented to bones of the figure
 	//and parents the oChild to it
 	function ParentToBoneGroup(oBone, oChild) {
-
-		var sbgName = oGroup.name + "_" + oBone.name;
-
-		var oBoneGroup = oGroup.findNodeChild(sbgName, false);
-		if (!oBoneGroup) {
-			//create bone group
-			oBoneGroup = new (DzGroupNode);
-			oBoneGroup.setName(sbgName);
-			var sgbLabel = oGroup.getLabel() + "_" + oBone.getLabel();
-			oBoneGroup.setLabel(sgbLabel);
-			oGroup.addNodeChild(oBoneGroup);
-		}
-		//parent the child to the bone group
-		oBoneGroup.addNodeChild(oChild);
+	    if (!oGroup || !WM2SceneContains(oGroup)) throw new Error("The storage group is no longer in the scene.");
+	    if (!WM2IsBoneOfFigure(oBone, oHumanFigure) || !oChild || oChild.getNodeParent() !== oBone) throw new Error("The wearable parent changed before transfer.");
+	    var arrChildren = oGroup.getNodeChildren(false);
+	    var oBoneGroup = null;
+	    for (var i = 0; i < arrChildren.length; i++) {
+	        var oSettings = WM2NodeSettings(arrChildren[i], false);
+	        if (!oSettings || oSettings.getStringValue("WM2Role", "") !== "BoneProxy") continue;
+	        var oResolved = WM2ResolveBoneProxy(oGroup, arrChildren[i], oHumanFigure);
+	        if (!oResolved.ok) throw new Error(oResolved.message);
+	        if (oResolved.node === oBone) {
+	            if (oBoneGroup) throw new Error("Several storage proxies reference the same bone.");
+	            oBoneGroup = arrChildren[i];
+	        }
+	    }
+	    if (!oBoneGroup) {
+	        oBoneGroup = new DzGroupNode();
+	        var sName = oGroup.name + "_" + oBone.name;
+	        if (oGroup.findNodeChild(sName, false)) sName += "_" + GenerateUniqueID(10);
+	        oBoneGroup.setName(sName);
+	        oBoneGroup.setLabel(oGroup.getLabel() + "_" + oBone.getLabel());
+	        oGroup.addNodeChild(oBoneGroup);
+	        var oMarked = WM2MarkBoneProxy(oBoneGroup, oHumanFigure, oBone);
+	        if (!oMarked.ok) {
+	            if (oBoneGroup.getNodeChildren(false).length === 0) Scene.removeNode(oBoneGroup);
+	            throw new Error(oMarked.message);
+	        }
+	    }
+	    oBoneGroup.addNodeChild(oChild);
 	}
 
 
 	//returns True if its parented to the root of the human figure or to one of its bones
 	//and false it its parented to another node
 	function FilterParentedToHumanFigureAndNotAnExemption(oChild) {
-		if (oChild.inherits("DzBone")) return false;
-
-		var oNode = oChild;
-		if (this) {
-			while (oNode) {
-				if (this.indexOf(oNode.name) > -1) return false; //remove exemptions from moving to the group like eyelashes
-
-				oNode = oNode.getNodeParent(); //can't be parented to an exempion node
-				if (oNode.name == oHumanFigure.name) break;
-			}
-		}
-
-
-		return IsParentedToHuman(oChild.getNodeParent());
-
+	    if (!oChild || oChild.inherits("DzBone") || !oHumanFigure) return false;
+	    var oNode = oChild;
+	    while (oNode && oNode !== oHumanFigure) {
+	        if (this && this.indexOf(oNode.name) > -1) return false;
+	        oNode = oNode.getNodeParent();
+	    }
+	    if (oNode !== oHumanFigure) return false;
+	    return IsParentedToHuman(oChild.getNodeParent());
 	}
 
 	function FilterMarkedForTransferring(oWearable) {
@@ -777,24 +968,8 @@
 
 	//returns true if oNode is parented to the human figure directly and false if its parented to another node
 	function IsParentedToHuman(oNode) {
-
-		if (!oNode)
-			return false;
-
-
-		if (oNode.inherits("DzBone"))
-			return IsParentedToHuman(oNode.getNodeParent());
-
-		if (!oNode)
-			return false;
-
-		var sObjName = oNode.objectName;
-		if (sObjName.startsWith("Genesis")) {
-			if (sObjName.startsWith("Genesis9") && sObjName != "Genesis9") return false; //parented to Genesis9Mouth or something
-			return true;
-		}
-
-		return false;
+	    while (oNode && oNode.inherits("DzBone")) oNode = oNode.getNodeParent();
+	    return oNode === oHumanFigure;
 	}
 
 	function err(sMessage, retValue) {
