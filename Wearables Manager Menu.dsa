@@ -1830,26 +1830,42 @@
 		this.arrDataSettingsItems = [];
 		this.arrFiles = [];
 		this.AddDataToQueue = function (oDataItem, oSettings, oKey) {
+			// This queue contains only the one MatewWearables data item per node.
+			// QObject wrappers may be fresh aliases: capture the live owner now.
+			var oOwner = oDataItem ? oDataItem.getOwner() : null;
+			if (!oOwner || !WM2SceneContains(oOwner) || !oSettings) throw new Error("The recovery data owner is no longer available.");
 			for (var i = 0; i < this.arrDataSettingsItems.length; i++) {
 				var oItem = this.arrDataSettingsItems[i];
-				if (oItem.oDataItem == oDataItem && oItem.oKey == oKey) return;
+				if (WM2SameNode(oItem.oOwner, oOwner) && oItem.oKey == oKey) return;
 			}
-			this.arrDataSettingsItems.push({oDataItem: oDataItem, oSettings: oSettings, oKey: oKey});
+			this.arrDataSettingsItems.push({oDataItem: oDataItem, oSettings: oSettings, oOwner: oOwner, oKey: oKey});
 		}
 		this.AddFileToQueue = function (fFile) { this.arrFiles.push(fFile); }
 		this.Finalize = function () {
-			var arrDataItems = [], arrSettings = [];
-			// Remove all queued fields before removing any native data-item owner.
+			var arrGroups = [];
+			// Group every wrapper alias before disposing any native data item.
 			for (var i = 0; i < this.arrDataSettingsItems.length; i++) {
-				var oItem = this.arrDataSettingsItems[i];
-				oItem.oSettings.removeValue(oItem.oKey);
-				if (arrDataItems.indexOf(oItem.oDataItem) < 0) { arrDataItems.push(oItem.oDataItem); arrSettings.push(oItem.oSettings); }
-			}
-			for (var i = 0; i < arrDataItems.length; i++) {
-				if (arrSettings[i].getNumValues() == 0) {
-					var oOwner = arrDataItems[i].getOwner();
-					if (oOwner) oOwner.removeDataItem(arrDataItems[i]);
+				var oItem = this.arrDataSettingsItems[i], oGroup = null;
+				for (var j = 0; j < arrGroups.length; j++) {
+					if (WM2SameNode(arrGroups[j].oOwner, oItem.oOwner)) { oGroup = arrGroups[j]; break; }
 				}
+				if (!oGroup) {
+					oGroup = {oOwner: oItem.oOwner, oDataItem: oItem.oDataItem, oSettings: oItem.oSettings, arrKeys: []};
+					arrGroups.push(oGroup);
+				}
+				if (oGroup.arrKeys.indexOf(oItem.oKey) < 0) oGroup.arrKeys.push(oItem.oKey);
+			}
+			// Validate all owners before mutating any acknowledged recovery record.
+			for (var i = 0; i < arrGroups.length; i++) {
+				if (!WM2SceneContains(arrGroups[i].oOwner)) throw new Error("The recovery data owner changed before cleanup.");
+			}
+			for (var i = 0; i < arrGroups.length; i++) {
+				var oGroup = arrGroups[i];
+				for (var j = 0; j < oGroup.arrKeys.length; j++) oGroup.oSettings.removeValue(oGroup.arrKeys[j]);
+			}
+			for (var i = 0; i < arrGroups.length; i++) {
+				var oGroup = arrGroups[i];
+				if (oGroup.oSettings.getNumValues() == 0) oGroup.oOwner.removeDataItem(oGroup.oDataItem);
 			}
 			// Retain sidecars while Undo can refer to them; release wrappers only.
 			for (var i = 0; i < this.arrFiles.length; i++) this.arrFiles[i].deleteLater();
@@ -1859,6 +1875,40 @@
 	}
 	var oRemoveQueue = new RemoveQueueClass();
 	var bWM2UndoOpen = false;
+
+	function WM2NodeKey(oNode) {
+	    if (!oNode) return null;
+	    try {
+	        if (!oNode.inherits("DzNode")) return null;
+	        var vID = oNode.elementID;
+	        if (typeof vID === "undefined" || vID === null) return null;
+	        var sID = String(vID), sClass = String(oNode.className());
+	        if (!sID || !sClass) return null;
+	        return { id: sID, className: sClass };
+	    } catch (e) { return null; }
+	}
+
+	function WM2SameNode(oA, oB) {
+	    var oKeyA = WM2NodeKey(oA), oKeyB = WM2NodeKey(oB);
+	    return !!(oKeyA && oKeyB && oKeyA.id === oKeyB.id && oKeyA.className === oKeyB.className);
+	}
+
+	function WM2LiveNode(oNode) {
+	    var oKey = WM2NodeKey(oNode);
+	    if (!oKey) return null;
+	    var arrNodes = Scene.getNodeList(), oLive = null;
+	    for (var i = 0; i < arrNodes.length; i++) {
+	        if (!WM2SameNode(arrNodes[i], oNode)) continue;
+	        if (oLive) return null; // Fail closed if the scene unexpectedly repeats an identity.
+	        oLive = arrNodes[i];
+	    }
+	    return oLive;
+	}
+
+	function WM2NodeIndexOf(arrNodes, oNode) {
+	    for (var i = 0; i < arrNodes.length; i++) if (WM2SameNode(arrNodes[i], oNode)) return i;
+	    return -1;
+	}
 
 	function WM2BeginUndo() {
 		if (bWM2UndoOpen) throw new Error("A Wearables Manager Undo operation is already open.");
@@ -1921,9 +1971,7 @@
 	}
 
 	function WM2SceneContains(oNode) {
-	    var arrNodes = Scene.getNodeList();
-	    for (var i = 0; i < arrNodes.length; i++) if (arrNodes[i] === oNode) return true;
-	    return false;
+	    return !!WM2LiveNode(oNode);
 	}
 
 	function WM2NodesWithValue(sKey, sValue) {
@@ -1951,7 +1999,7 @@
 	    var sID = oSettings ? oSettings.getStringValue("NodeID", "") : "";
 	    if (sID) {
 	        var arrMatches = WM2NodesWithValue("NodeID", sID);
-	        if (arrMatches.length !== 1 || arrMatches[0] !== oNode) return WM2ReferenceResult(false, "ambiguous", null, "Several scene nodes share a saved node identity.");
+	        if (arrMatches.length !== 1 || !WM2SameNode(arrMatches[0], oNode)) return WM2ReferenceResult(false, "ambiguous", null, "Several scene nodes share a saved node identity.");
 	    } else {
 	        sID = WM2UniqueToken("NodeID");
 	        oSettings = WM2NodeSettings(oNode, true);
@@ -1995,7 +2043,7 @@
 	    if (oSettings.getStringValue(sPrefix + "_NodeID", "") || oSettings.getStringValue(sPrefix, "")) {
 	        var oExisting = WM2ResolveNodeReference(oSettings, sPrefix, sLegacyMode);
 	        if (!oExisting.ok) return oExisting;
-	        if (oExisting.node !== oTarget) return WM2ReferenceResult(false, "conflict", null, "An unresolved or different saved reference must be recovered before recording another target.");
+	        if (!WM2SameNode(oExisting.node, oTarget)) return WM2ReferenceResult(false, "conflict", null, "An unresolved or different saved reference must be recovered before recording another target.");
 	    }
 	    var oIdentity = WM2EnsureNodeID(oTarget);
 	    if (!oIdentity.ok) return oIdentity;
@@ -2026,7 +2074,7 @@
 	    if (!oBone || !oBone.inherits("DzBone")) return false;
 	    var oNode = oBone;
 	    while (oNode && oNode.inherits("DzBone")) oNode = oNode.getNodeParent();
-	    return oNode === oFigure;
+	    return WM2SameNode(oNode, oFigure);
 	}
 
 	function WM2LegacyBoneMatches(oGroup, oProxy, oHumanFigure) {
@@ -2043,7 +2091,7 @@
 	}
 
 	function WM2ResolveBoneProxy(oGroup, oProxy, oHumanFigure) {
-	    if (!oGroup || !oProxy || !oHumanFigure || oProxy.getNodeParent() !== oGroup) return WM2ReferenceResult(false, "missing", null, "The storage child has moved or is missing.");
+	    if (!oGroup || !oProxy || !oHumanFigure || !WM2SameNode(oProxy.getNodeParent(), oGroup)) return WM2ReferenceResult(false, "missing", null, "The storage child has moved or is missing.");
 	    var oSettings = WM2NodeSettings(oProxy, false);
 	    var sRole = oSettings ? oSettings.getStringValue("WM2Role", "") : "";
 	    if (sRole !== "BoneProxy") {
@@ -2057,7 +2105,7 @@
 	    if (oProxy.className() !== "DzGroupNode") return WM2ReferenceResult(false, "wrong-class", null, "A marked bone proxy is not a group.");
 	    var oOwner = WM2ResolveNodeReference(oSettings, "WM2Owner", "name");
 	    if (!oOwner.ok) return oOwner;
-	    if (oOwner.node !== oHumanFigure) return WM2ReferenceResult(false, "wrong-owner", null, "The bone proxy belongs to another figure.");
+	    if (!WM2SameNode(oOwner.node, oHumanFigure)) return WM2ReferenceResult(false, "wrong-owner", null, "The bone proxy belongs to another figure.");
 	    var oBone = WM2ResolveNodeReference(oSettings, "WM2Bone", "name");
 	    if (!oBone.ok) return oBone;
 	    if (!WM2IsBoneOfFigure(oBone.node, oHumanFigure)) return WM2ReferenceResult(false, "wrong-owner", null, "The saved bone no longer belongs to this figure.");
@@ -2084,7 +2132,7 @@
 	    // Invoke only after the user explicitly confirms this particular legacy group.
 	    if (!oGroup || !oProxy || !oHumanFigure) return WM2ReferenceResult(false, "missing", null, "The reviewed legacy bone group is missing.");
 	    var arrMatches = WM2LegacyBoneMatches(oGroup, oProxy, oHumanFigure);
-	    if (oProxy.getNodeParent() !== oGroup || arrMatches.length !== 1 || arrMatches[0] !== oReviewedBone) return WM2ReferenceResult(false, "ambiguous", null, "The reviewed legacy bone group no longer matches the selected bone.");
+	    if (!WM2SameNode(oProxy.getNodeParent(), oGroup) || arrMatches.length !== 1 || !WM2SameNode(arrMatches[0], oReviewedBone)) return WM2ReferenceResult(false, "ambiguous", null, "The reviewed legacy bone group no longer matches the selected bone.");
 	    return WM2MarkBoneProxy(oProxy, oHumanFigure, oReviewedBone);
 	}
 
@@ -2199,22 +2247,22 @@
 	    // Validate every source ownership relation before moving the first item.
 	    for (var i = 0; i < arrPairs.length; i++) {
 	        var oWearable = arrPairs[i][0], oParent = arrPairs[i][1];
-	        if (!WM2SceneContains(oWearable) || !WM2SceneContains(oParent) || (oParent !== oHumanFigure && !WM2IsBoneOfFigure(oParent, oHumanFigure))) return err("A selected wearable or destination parent changed. Recovery remains pending.", false);
+	        if (!WM2SceneContains(oWearable) || !WM2SceneContains(oParent) || (!WM2SameNode(oParent, oHumanFigure) && !WM2IsBoneOfFigure(oParent, oHumanFigure))) return err("A selected wearable or destination parent changed. Recovery remains pending.", false);
 	        var oCurrentParent = oWearable.getNodeParent();
-	        if (oParent === oHumanFigure) {
-	            if (oCurrentParent !== oGroup) return err("The stored parent changed for " + oWearable.getLabel() + ". Recovery remains pending.", false);
+	        if (WM2SameNode(oParent, oHumanFigure)) {
+	            if (!WM2SameNode(oCurrentParent, oGroup)) return err("The stored parent changed for " + oWearable.getLabel() + ". Recovery remains pending.", false);
 	        } else {
 	            var oProxy = WM2ResolveBoneProxy(oGroup, oCurrentParent, oHumanFigure);
-	            if (!oProxy.ok || oProxy.status !== "resolved" || oProxy.node !== oParent) return err("The stored bone connection changed for " + oWearable.getLabel() + ". Recovery remains pending.", false);
+	            if (!oProxy.ok || oProxy.status !== "resolved" || !WM2SameNode(oProxy.node, oParent)) return err("The stored bone connection changed for " + oWearable.getLabel() + ". Recovery remains pending.", false);
 	        }
 	    }
 	    var arrNodes = [];
 	    for (var i = 0; i < arrPairs.length; i++) {
 	        var oWearable = arrPairs[i][0], oParent = arrPairs[i][1];
 	        var arrChildren = [oWearable].concat(oWearable.getNodeChildren(true));
-	        for (var j = 0; j < arrChildren.length; j++) if (arrNodes.indexOf(arrChildren[j]) < 0) arrNodes.push(arrChildren[j]);
+	        for (var j = 0; j < arrChildren.length; j++) if (WM2NodeIndexOf(arrNodes, arrChildren[j]) < 0) arrNodes.push(arrChildren[j]);
 	        oParent.addNodeChild(oWearable);
-	        if (oWearable.getNodeParent() != oParent) return err("Parent recovery did not apply for " + oWearable.getLabel() + ".", false);
+	        if (!WM2SameNode(oWearable.getNodeParent(), oParent)) return err("Parent recovery did not apply for " + oWearable.getLabel() + ".", false);
 	    }
 	    return WM2RestoreNodeState(oHumanFigure, arrNodes, arrShells);
 	}
@@ -2410,7 +2458,7 @@
 	function PlaceWearableIntoGroup(oHumanFigure, oWearable, oGroup) {
 		if (!WM2SceneContains(oWearable) || !WM2SceneContains(oHumanFigure) || !WM2SceneContains(oGroup)) throw new Error("A wearable, figure, or storage group is no longer in the scene.");
 		var oParent = oWearable.getNodeParent();
-		if (oParent !== oHumanFigure && !WM2IsBoneOfFigure(oParent, oHumanFigure)) throw new Error("The wearable's parent changed before transfer.");
+		if (!WM2SameNode(oParent, oHumanFigure) && !WM2IsBoneOfFigure(oParent, oHumanFigure)) throw new Error("The wearable's parent changed before transfer.");
 		if (oWearable.inherits("DzSkeleton")) {
 			var oTarget = oWearable.getFollowTarget();
 			if (oTarget) {
@@ -2421,16 +2469,16 @@
 				if (oWearable.getFollowTarget()) throw new Error("FitTo did not detach for " + oWearable.getLabel() + ".");
 			}
 		}
-		if (oParent === oHumanFigure) oGroup.addNodeChild(oWearable);
+		if (WM2SameNode(oParent, oHumanFigure)) oGroup.addNodeChild(oWearable);
 		else ParentToBoneGroup(oParent, oWearable);
-		if (oWearable.getNodeParent() === oParent) throw new Error("The wearable did not move into storage.");
+		if (WM2SameNode(oWearable.getNodeParent(), oParent)) throw new Error("The wearable did not move into storage.");
 	}
 
 	function SaveCollisionItem(oHumanFigure, oWearable) {
 		var oHelper = new DzSceneHelper();
 		var oProp = oHelper.findPropertyByInternalName("Collision Item", oWearable);
 		var oTarget = oProp ? oProp.getValue() : null;
-		if (!oTarget || oTarget === oHumanFigure) return true;
+		if (!oTarget || WM2SameNode(oTarget, oHumanFigure)) return true;
 		var oResult = WM2SaveNodeReference(WM2NodeSettings(oWearable, true), SETTINGS_COLLISION_ITEM, oTarget, "label");
 		return oResult.ok ? true : err("Cannot record collision recovery for " + oWearable.getLabel() + ": " + oResult.message, false);
 	}
@@ -2447,7 +2495,7 @@
 		var oCollisionProp = oHelper.findPropertyByInternalName("Collision Item", oWearable);
 		if (!oCollisionProp) return err("Collision property is unavailable for " + oWearable.getLabel() + ". Recovery remains pending.", false);
 		oCollisionProp.setValue(oResolved.node);
-		if (oCollisionProp.getValue() != oResolved.node) return err("Collision recovery did not apply for " + oWearable.getLabel() + ".", false);
+		if (!WM2SameNode(oCollisionProp.getValue(), oResolved.node)) return err("Collision recovery did not apply for " + oWearable.getLabel() + ".", false);
 		WM2QueueReferenceRemoval(oData, oSettings, SETTINGS_COLLISION_ITEM);
 		return true;
 	}
@@ -2459,13 +2507,13 @@
 			var arrChildren = oWearable.getNodeChildren(false);
 			for (var i = arrChildren.length - 1; i >= 0; i--) {
 				oResolved.node.addNodeChild(arrChildren[i]);
-				if (arrChildren[i].getNodeParent() != oResolved.node) return err("Parent recovery did not apply for " + arrChildren[i].getLabel() + ".", false);
+				if (!WM2SameNode(arrChildren[i].getNodeParent(), oResolved.node)) return err("Parent recovery did not apply for " + arrChildren[i].getLabel() + ".", false);
 			}
 			// Keep the empty proxy alive until captured descendants finish restoration.
 			return true;
 		}
 		oHumanFigure.addNodeChild(oWearable);
-		return oWearable.getNodeParent() == oHumanFigure;
+		return WM2SameNode(oWearable.getNodeParent(), oHumanFigure);
 	}
 	function FilterSkeletons(oNode) {
 		if (!oNode) return false;
@@ -2493,7 +2541,7 @@
 		var oResolved = WM2ResolveNodeReference(oSettings, SETTINGS_TARGET, "name");
 		if (!oResolved.ok) return err("FitTo recovery remains pending for " + oNode.getLabel() + ": " + oResolved.message, false);
 		oNode.setFollowTarget(oResolved.node);
-		if (oNode.getFollowTarget() != oResolved.node) return err("FitTo recovery did not apply for " + oNode.getLabel() + ".", false);
+		if (!WM2SameNode(oNode.getFollowTarget(), oResolved.node)) return err("FitTo recovery did not apply for " + oNode.getLabel() + ".", false);
 		WM2QueueReferenceRemoval(oData, oSettings, SETTINGS_TARGET);
 		return true;
 	}
@@ -2567,7 +2615,7 @@
 	    if (sID) {
 	        var arrMatches = WM2NodesWithValue(SETTINGS_ID, sID);
 	        for (var i = 0; i < arrMatches.length; i++) {
-	            if (arrMatches[i] !== oHumanFigure && arrMatches[i] !== oGroup) throw new Error("The saved figure binding is ambiguous.");
+	            if (!WM2SameNode(arrMatches[i], oHumanFigure) && !WM2SameNode(arrMatches[i], oGroup)) throw new Error("The saved figure binding is ambiguous.");
 	        }
 	    } else {
 	        sID = WM2UniqueToken(SETTINGS_ID);
@@ -2708,14 +2756,14 @@
 	    if (!oHumanFigure || !IsNodeHumanFigure(oHumanFigure)) return false;
 	    var oPair = WM2BoundPair(oHumanFigure);
 	    if (oPair.status === "ambiguous") throw new Error("Several figures or storage groups share this Wearables Manager binding. Recover the binding before transferring wearables.");
-	    return oPair.owner === oHumanFigure && oPair.group ? oPair.group : false;
+	    return WM2SameNode(oPair.owner, oHumanFigure) && oPair.group ? oPair.group : false;
 	}
 
 	function FindBoundFigure(oGroup) {
 	    if (!oGroup || oGroup.className() !== "DzGroupNode") return false;
 	    var oPair = WM2BoundPair(oGroup);
 	    if (oPair.status === "ambiguous") throw new Error("Several figures or storage groups share this Wearables Manager binding. Recover the binding before transferring wearables.");
-	    return oPair.group === oGroup && oPair.owner && oPair.owner !== oGroup ? oPair.owner : false;
+	    return WM2SameNode(oPair.group, oGroup) && oPair.owner && !WM2SameNode(oPair.owner, oGroup) ? oPair.owner : false;
 	}
 
 
@@ -2764,7 +2812,7 @@
 	//and parents the oChild to it
 	function ParentToBoneGroup(oBone, oChild) {
 	    if (!oGroup || !WM2SceneContains(oGroup)) throw new Error("The storage group is no longer in the scene.");
-	    if (!WM2IsBoneOfFigure(oBone, oHumanFigure) || !oChild || oChild.getNodeParent() !== oBone) throw new Error("The wearable parent changed before transfer.");
+	    if (!WM2IsBoneOfFigure(oBone, oHumanFigure) || !oChild || !WM2SameNode(oChild.getNodeParent(), oBone)) throw new Error("The wearable parent changed before transfer.");
 	    var arrChildren = oGroup.getNodeChildren(false);
 	    var oBoneGroup = null;
 	    for (var i = 0; i < arrChildren.length; i++) {
@@ -2772,7 +2820,7 @@
 	        if (!oSettings || oSettings.getStringValue("WM2Role", "") !== "BoneProxy") continue;
 	        var oResolved = WM2ResolveBoneProxy(oGroup, arrChildren[i], oHumanFigure);
 	        if (!oResolved.ok) throw new Error(oResolved.message);
-	        if (oResolved.node === oBone) {
+	        if (WM2SameNode(oResolved.node, oBone)) {
 	            if (oBoneGroup) throw new Error("Several storage proxies reference the same bone.");
 	            oBoneGroup = arrChildren[i];
 	        }
@@ -2799,11 +2847,11 @@
 	function FilterParentedToHumanFigureAndNotAnExemption(oChild) {
 	    if (!oChild || oChild.inherits("DzBone") || !oHumanFigure) return false;
 	    var oNode = oChild;
-	    while (oNode && oNode !== oHumanFigure) {
+	    while (oNode && !WM2SameNode(oNode, oHumanFigure)) {
 	        if (this && this.indexOf(oNode.name) > -1) return false;
 	        oNode = oNode.getNodeParent();
 	    }
-	    if (oNode !== oHumanFigure) return false;
+	    if (!WM2SameNode(oNode, oHumanFigure)) return false;
 	    return IsParentedToHuman(oChild.getNodeParent());
 	}
 
@@ -2823,7 +2871,7 @@
 	//returns true if oNode is parented to the human figure directly and false if its parented to another node
 	function IsParentedToHuman(oNode) {
 	    while (oNode && oNode.inherits("DzBone")) oNode = oNode.getNodeParent();
-	    return oNode === oHumanFigure;
+	    return WM2SameNode(oNode, oHumanFigure);
 	}
 
 	function err(sMessage, retValue) {
