@@ -18,6 +18,8 @@ const suites=[
  ['storage/regressions.cjs','--sourceRoot',root,'--expect','after'],
  ['graph/regressions.cjs','--source-root',root,'--mode','source','--output',path.join(output,'graph-results.json')],
  ['graph/ownership.cjs','--source-root',root,'--mode','source','--output',path.join(output,'ownership-results.json')],
+ ['graph/aliases.cjs','--source-root',root,'--output',path.join(output,'alias-results.json')],
+ ['storage/aliases.cjs','--sourceRoot',root,'--expect','after'],
  ['controls/regressions.cjs','--source-root',root],
  ['help/regressions.cjs',path.join(root,'Wearables Manager User Guide.dsa')]
 ];

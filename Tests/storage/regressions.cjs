@@ -11,9 +11,10 @@ class Settings {
   setStringValue(k,v){this.values[k]=v;} setBoolValue(k,v){this.values[k]=v;}
   removeValue(k){delete this.values[k];} getNumValues(){return Object.keys(this.values).length;}
 }
+let nextElementID=1;
 class Node {
-  constructor(name,classes=[],values={}){this.name=name;this.classes=classes;this.children=[];this.parent=null;this.settings=new Settings(values);this.hasData=!!Object.keys(values).length;this.follow=null;this.collision=null;this.data={getSettings:()=>this.settings,getOwner:()=>this};}
-  getLabel(){return this.name;} inherits(c){return this.classes.includes(c);}
+  constructor(name,classes=[],values={}){this.name=name;this.elementID=nextElementID++;this.classes=classes;this.children=[];this.parent=null;this.settings=new Settings(values);this.hasData=!!Object.keys(values).length;this.follow=null;this.collision=null;this.data={getSettings:()=>this.settings,getOwner:()=>this};}
+  getLabel(){return this.name;} className(){return this.classes[0]||'DzNode';} inherits(c){return c==='DzNode'||this.classes.includes(c)||(c==='DzSkeleton'&&this.classes.includes('DzFigure'));}
   getNodeChildren(recursive){return this.children.flatMap(c=>[c,...(recursive?c.getNodeChildren(true):[])]);}
   addNodeChild(n){if(n.parent)n.parent.children=n.parent.children.filter(v=>v!==n);n.parent=this;this.children.push(n);}
   getNodeParent(){return this.parent;} findNodeChild(n,recursive){return this.getNodeChildren(!!recursive).find(v=>v.name===n)||null;}
@@ -33,7 +34,7 @@ function fixture(src){
     DzFile:function(p){this.exists=()=>disk.has(p);this.refresh=()=>{};this.isFile=()=>disk.has(p);this.size=()=>disk.has(p)&&!empty.has(p)?12:0;this.open=()=>disk.has(p)&&!unreadable.has(p);this.close=()=>{};this.remove=()=>{log.deleted.push(p);disk.delete(p);};this.deleteLater=()=>{};},
     DzFileIOSettings:Settings,DzSimpleElementData:function(){const s=new Settings();this.getSettings=()=>s;},
     DzSceneHelper:function(){return{findPropertyByInternalName:(_,n)=>({getValue:()=>n.collision,setValue:v=>n.collision=v})};},
-    Scene:{getNodeList:()=>nodes,findNodeByLabel:n=>nodes.find(v=>v.name===n)||null,selectAllNodes(){},setPrimarySelection(){},getPrimarySelection:()=>({getLabel:()=>'selected'}),removeNode(n){log.removed.push(n.name);if(n.parent)n.parent.children=n.parent.children.filter(v=>v!==n);}},
+    Scene:{getNodeList:()=>nodes,findNodeByLabel:n=>nodes.find(v=>v.name===n)||null,selectAllNodes(){},setPrimarySelection(){},getPrimarySelection:()=>({getLabel:()=>'selected'}),removeNode(n){log.removed.push(n.name);if(n.parent)n.parent.children=n.parent.children.filter(v=>v!==n);n.parent=null;const index=nodes.indexOf(n);if(index>=0)nodes.splice(index,1);}},
     App:{getContentMgr:()=>({openFile:p=>{log.opened.push(p);return c.openResult;}}),getAssetIOMgr:()=>({findAssetFilterIndex:()=>0,getAssetFilter:()=>({getDefaultOptions(){},getOptions:()=>true,deleteLater(){}}),doSaveWithOptions:(_f,_s,_a,p)=>{log.saveCalls.push(p);if(c.saveError===0){disk.add(p+'.duf');if(c.emptyAfterSave)empty.add(p+'.duf');}return c.saveError;}})},
     GenerateUniqueGroupFileName:()=> 'candidate'+(++c.serial),
     GetExtraMaterialsArray:shape=>shape.getAllMaterials(),GetHumanFigureMaterialsNames:()=>[],getElementProperties:m=>m.properties||[],getPropertyEntry:p=>p,
@@ -49,7 +50,7 @@ function fixture(src){
   c.WM2ReviewAndAdoptLegacyProxy=(g,p,h)=>c.WM2ResolveBoneProxy(g,p,h);
   c.DzFile.ReadOnly=1;vm.createContext(c);
   const wanted=['RemoveQueueClass','SaveShellMaterialsInFile','AddStringDataToNodeEx','GetSerializedUVs','RestoreMaterialsFromFile','RestoreNodeFollowTarget','RestoreCollisionItem','ReturnWearable','ReturnAllWearableToTheFigure','FilterSkeletons','FilterShells','err','GetListOfSkeletonsFromMoveToFigurePairs',
-    'WM2BeginUndo','WM2AcceptUndo','WM2CancelUndo','WM2SnapshotPath',
+    'WM2NodeKey','WM2SameNode','WM2LiveNode','WM2NodeIndexOf','WM2SceneContains','WM2IsBoneOfFigure','WM2BeginUndo','WM2AcceptUndo','WM2CancelUndo','WM2SnapshotPath',
     'WM2ReadableBackup','WM2CheckPendingShellSnapshot','WM2SaveShellSnapshots','WM2CheckShellSnapshots','WM2CheckShellUVMaterials','WM2QueueReferenceRemoval','WM2RestoreNodeState','WM2RestoreWearablePairs','WM2RemoveEmptyStorageGroup'];
   for(const name of wanted){try{const f=getFunction(src,name);vm.runInContext(f.text,c);}catch(e){if(!String(e).includes('Missing function '))throw e;}}
   c.oRemoveQueue=new c.RemoveQueueClass();
@@ -58,6 +59,10 @@ function fixture(src){
   return c;
 }
 const commonTests={
+  'actual node helpers accept a distinct wrapper with the same session identity':c=>{if(!c.WM2NodeKey)return{skip:true};const n=c.makeNode('figure',['DzFigure']),alias=Object.create(n);assert.notEqual(alias,n);assert.equal(c.WM2SameNode(alias,n),true);assert.equal(c.WM2SceneContains(alias),true);assert.equal(c.WM2NodeIndexOf([n],alias),0);},
+  'actual node helpers keep same-label distinct owners separate':c=>{if(!c.WM2NodeKey)return{skip:true};const a=c.makeNode('same',['DzNode']),b=c.makeNode('same',['DzNode']);assert.equal(c.WM2SameNode(a,b),false);assert.equal(c.WM2NodeIndexOf([a],b),-1);},
+  'actual live-node helper rejects an owner removed from the scene':c=>{if(!c.WM2NodeKey)return{skip:true};const n=c.makeNode('removed',['DzFigure']);assert.equal(c.WM2SceneContains(n),true);c.Scene.removeNode(n);assert.equal(c.WM2SceneContains(n),false);},
+  'actual live-node helper rejects duplicate session identities':c=>{if(!c.WM2NodeKey)return{skip:true};const n=c.makeNode('duplicate',['DzFigure']);c.nodes.push(Object.create(n));assert.equal(c.WM2SceneContains(n),false);},
   'sparse reference keys removed before native owner disposal':c=>{const n=c.makeNode('legacy',['DzSkeleton'],{Target:'human'});let alive=true,disposals=0;const origRemove=n.settings.removeValue.bind(n.settings);n.settings.removeValue=k=>{assert(alive,'settings accessed after owner disposed');origRemove(k);};n.removeDataItem=()=>{assert(alive,'owner disposed twice');alive=false;disposals++;};for(const k of ['Target','Target_NodeID','Target_Name','Target_Label','Target_Class'])c.oRemoveQueue.AddDataToQueue(n.data,n.settings,k);c.oRemoveQueue.Finalize();assert.equal(disposals,1);assert.equal(alive,false);},
   'durable backup path loaded and acknowledged without file deletion':c=>{const saved='/persistent/full.duf',n=c.makeShell({FileName:'legacy-name',BackupPath:saved,UV:''});c.disk.add(saved);const r=c.RestoreMaterialsFromFile(n);c.oRemoveQueue.Finalize();assert.deepEqual(c.log.opened,[saved]);assert.deepEqual(n.settings.values,{});assert(c.disk.has(saved));assert.equal(r,true);},
   'missing durable backup does not fall back to legacy temporary file':c=>{const saved='/persistent/missing.duf',n=c.makeShell({FileName:'legacy-name',BackupPath:saved,UV:''});c.disk.add('/mock/matew/legacy-name.duf');const r=c.RestoreMaterialsFromFile(n);c.oRemoveQueue.Finalize();assert.equal(c.log.opened.length,0);assert.equal(n.settings.values.FileName,'legacy-name');assert.equal(n.settings.values.BackupPath,saved);assert.equal(r,false);},
@@ -94,7 +99,7 @@ const selectiveTests={
 };
 const results=[];
 for(const file of files){const src=fs.readFileSync(path.join(root,file),'utf8').replace(/\r\n/g,'\n');const tests={...commonTests,...((file.includes('Full')||file.includes('Menu'))?selectiveTests:{})};for(const [name,test]of Object.entries(tests)){try{const value=test(fixture(src),src,file);results.push({file,name,status:value?.skip?'SKIP':'PASS'});}catch(e){results.push({file,name,status:'FAIL',error:String(e.message)});}}}
-const report={proposalOnly:false,nativeDAZUsed:false,sourceRoot:root,expect,total:results.length,pass:results.filter(r=>r.status==='PASS').length,fail:results.filter(r=>r.status==='FAIL').length,skip:results.filter(r=>r.status==='SKIP').length,results,dependencyMocks:['WM2ResolveNodeReference + WM2ResolveBoneProxy deterministic scene fixtures','WM2ReviewAndAdoptLegacyProxy delegates bone fixture without UI','WM2SceneContains + WM2IsBoneOfFigure deterministic live-node checks','WM2BackupDirectory returns mock PATH_TEMP; actual WM2SnapshotPath tested','actual source WM2BeginUndo/AcceptUndo/CancelUndo evaluated with invocation flag'],limitations:['Scene cancelUndo rollback/data-item native recording are not modeled','Graph stable-reference helpers are deterministic fixture stubs; their independent graph suite must pass','No DAZ4/6/native API behavior exercised','No physical snapshot filesystem touched']};
+const report={proposalOnly:false,nativeDAZUsed:false,sourceRoot:root,expect,total:results.length,pass:results.filter(r=>r.status==='PASS').length,fail:results.filter(r=>r.status==='FAIL').length,skip:results.filter(r=>r.status==='SKIP').length,results,dependencyMocks:['WM2ResolveNodeReference + WM2ResolveBoneProxy deterministic scene fixtures','WM2ReviewAndAdoptLegacyProxy delegates bone fixture without UI','actual source WM2NodeKey/SameNode/LiveNode/NodeIndexOf/SceneContains/IsBoneOfFigure evaluated when present; original baseline fallback mocks only','WM2BackupDirectory returns mock PATH_TEMP; actual WM2SnapshotPath tested','actual source WM2BeginUndo/AcceptUndo/CancelUndo evaluated with invocation flag'],limitations:['Scene cancelUndo rollback/data-item native recording are not modeled; native diagnostics prove metadata is not tracked','Graph stable-reference helpers are deterministic fixture stubs; their independent graph suite must pass','No DAZ4/6/native API behavior exercised','No physical snapshot filesystem touched']};
 fs.writeFileSync(path.join(root,'.test-output/storage-'+expect+'.json'),JSON.stringify(report,null,2));console.log(JSON.stringify({sourceRoot:root,total:report.total,pass:report.pass,fail:report.fail,skip:report.skip,failures:results.filter(r=>r.status==='FAIL')}));
 if(expect==='after'&&report.fail)process.exitCode=1;
 if(expect==='before'&&!report.fail)process.exitCode=1;

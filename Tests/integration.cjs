@@ -15,7 +15,7 @@ function world(source) {
   function Data(k){this.key=k;this.settings=new Settings();this.getSettings=()=>this.settings;this.getOwner=()=>this.owner;}
   class Node {
     constructor(name,type='DzNode',parent=null){this.name=this.objectName=name;this.type=type;this.label=name;this.parent=null;this.children=[];this.data={};this.elementID=state.nodes.length+1;this.follow=null;this.collider=null;this.shape=null;state.nodes.push(this);if(parent)parent.addNodeChild(this);}
-    inherits(k){return this.type===k||(this.type==='DzFigure'&&k==='DzSkeleton');}className(){return this.type;}
+    inherits(k){return k==='DzNode'||this.type===k||(this.type==='DzFigure'&&k==='DzSkeleton');}className(){return this.type;}
     getLabel(){return this.label;}setName(n){this.name=this.objectName=n;}setLabel(n){this.label=n;}setVisible(v){this.visible=v;}
     getNodeParent(){return this.parent;}getNodeChildren(r){return r?this.children.flatMap(n=>[n,...n.getNodeChildren(true)]):this.children.slice();}
     addNodeChild(n){if(n.parent)n.parent.children=n.parent.children.filter(c=>c!==n);n.parent=this;this.children.push(n);}

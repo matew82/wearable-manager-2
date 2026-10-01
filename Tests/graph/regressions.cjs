@@ -41,7 +41,7 @@ function createWorld(source) {
       this.elementID = Node.next++; this.parent = null; this.children = []; this.data = {};
       if (parent) parent.addNodeChild(this);
     }
-    inherits(t) { return this.type === t || (t === 'DzSkeleton' && this.type === 'DzFigure'); }
+    inherits(t) { return t === 'DzNode' || this.type === t || (t === 'DzSkeleton' && this.type === 'DzFigure'); }
     className() { return this.type; }
     getNodeParent() { return this.parent; }
     getNodeChildren(recursive) { return recursive ? this.children.flatMap(c=>[c,...c.getNodeChildren(true)]) : this.children.slice(); }
@@ -76,6 +76,12 @@ function createWorld(source) {
   originalNames.forEach(n=>vm.runInContext(extract(source,n),sandbox));
   if(mode==='proposal') vm.runInContext(proposal + '\n' + reviewProposal,sandbox);
   if(mode==='source') manifest.addFunctions.forEach(n=>vm.runInContext(extract(source,n),sandbox));
+  // Native-correct comparison helpers were added after the original graph manifest.
+  // They remain optional so the same runner can reproduce the earlier source baseline.
+  if(mode==='source') ['WM2NodeKey','WM2SameNode','WM2LiveNode','WM2NodeIndexOf'].forEach(n=>{
+    const code=extract(source,n,true);
+    if(code)vm.runInContext(code,sandbox);
+  });
   return {state,sandbox,Node,bind,data};
 }
 
