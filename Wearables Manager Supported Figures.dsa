@@ -1,0 +1,6 @@
+// DAZ Studio 4.9+; configuration editor only.
+var sWM2ResourcesPath = new DzFileInfo(getScriptFileName()).path() + "/Resources";
+include(sWM2ResourcesPath + "/WM2 Support.dsa");
+include(sWM2ResourcesPath + "/WM2 Settings UI.dsa");
+
+WM2ShowSupportedFigures(sWM2ResourcesPath);

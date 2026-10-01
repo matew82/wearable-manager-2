@@ -10,6 +10,10 @@
 
  */
 
+var sWM2ResourcesPath = new DzFileInfo(getScriptFileName()).path() + "/Resources";
+include(sWM2ResourcesPath + "/WM2 Support.dsa");
+include(sWM2ResourcesPath + "/WM2 Settings UI.dsa");
+
 (function () {
 	// Qt 6 uses a small default iconSize even when pixmap is larger.
 	function setWearablesButtonPixmap(button, pixmap, iconSize) {
@@ -24,7 +28,7 @@
 
 	var PATH_TEMP = App.getTempPath() + "/matew/";
 
-	var PATH_ICONS = new DzFileInfo(getScriptFileName()).path() + "/Resources";
+	var PATH_ICONS = sWM2ResourcesPath;
 	//var PATH_ICONS = "F:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager/Resources";
 	var JSON_NAME = "Wearables Manager.json";
 	var ICONS_EXTENSION = ".PNG";
@@ -42,6 +46,7 @@
 
 	var ARRAY_SEPARATOR = ",,";
 	var ARR_HUMAN_FIGURES_NAMES = ["Genesis", "Genesis2Female", "Genesis2Male", "Genesis3Female", "Genesis3Male", "Genesis8Female", "Genesis8Male", "Genesis8_1Female", "Genesis8_1Male", "Genesis9", "Genesis9_1", "Genesis10", "Genesis10Female", "Genesis10Male"];
+	var oWM2Config = WM2Support.load(PATH_ICONS).config;
 
 	var nModifierKeyState = App.modifierKeyState();
 	var bShiftPressed = (nModifierKeyState & 0x02000000) != 0;
@@ -240,10 +245,11 @@
 			if (!sIconName) return false;
 			if (arrPixMaps.hasOwnProperty(sIconName)) return arrPixMaps[sIconName];
 			var dir_icons = new DzDir(PATH_ICONS);
-			var oPixMap = new Pixmap(dir_icons.filePath(sIconName));
-			arrPixMaps[sIconName] = oPixMap;
-			dir_icons.deleteLater();
-			return oPixMap;
+			try {
+				var oPixMap = new Pixmap(dir_icons.filePath(sIconName));
+				arrPixMaps[sIconName] = oPixMap;
+				return oPixMap;
+			} finally { dir_icons.deleteLater(); }
 		}
 
 		function FindIconInInherited(oWearable) {
@@ -378,6 +384,21 @@
 		}
 
 		this.GetIconForWearable = function (oWearable) {
+			// User rules override automatic icons only when the configured PNG exists.
+			if (typeof WM2Support != "undefined" && typeof WM2Support.matchIcon == "function" && typeof oWM2Config != "undefined" && oWM2Config) {
+				var configured = WM2Support.matchIcon(oWM2Config.iconRules, oWearable);
+				if (configured.matched) {
+					var ruleDir = null;
+					try {
+						ruleDir = new DzDir(PATH_ICONS);
+						if (ruleDir.exists(configured.icon)) {
+							var configuredPixmap = GetPixmap(configured.icon);
+							if (configuredPixmap && configuredPixmap.width > 0 && configuredPixmap.height > 0) return configuredPixmap;
+						}
+					} catch (e) {}
+					finally { if (ruleDir) ruleDir.deleteLater(); }
+				}
+			}
 			var sClassName = oWearable.className();
 			if (SecondPriorityClassesForInheritance.indexOf(sClassName) > -1) {
 				var sIconName = FindIconInNames(oWearable);
@@ -2291,7 +2312,7 @@
 	\*-----------------------------------------------------------------*/
 	if (!CheckForAnotherProcessActive()) return;
 	if (!(oNode = Scene.getPrimarySelection())) return err("Please, select a human figure to proceed.");
-	if (!(oHumanFigure = GetCurrentHumanFigure(oNode))) return err("No human figure selected."); //get genesis figure
+	if (!(oHumanFigure = GetCurrentHumanFigure(oNode))) return err("Select a supported figure. Use Wearables Manager Supported Figures to add a custom figure."); //get genesis figure
 	var oAnotherFigure = GetAnotherHumanFigureParentedToTheCurrent(oHumanFigure);
 	if (oAnotherFigure) return err("Human figure '" + oAnotherFigure.getLabel() + "' is parented to " + oHumanFigure.getLabel() + ". This could potentially cause problems. Please unparent it before continuing.");
 
@@ -2818,20 +2839,7 @@
 	}
 
 	function IsNodeHumanFigure(oNode) {
-
-		if (oNode.inherits("DzFigure")) {
-			var sObjName = oNode.objectName;
-			if (ARR_HUMAN_FIGURES_NAMES.indexOf(sObjName) > -1) return true;
-			/*
-			if (sObjName.startsWith("Genesis")) {
-				//found Genesis3.. or Genesis8... or Genesis9...
-				//if (sObjName.startsWith("Genesis9") && (sObjName != "Genesis9")) return false; //no "Genesis9 Mouth" or similar
-				if (!(sObjName.startsWith("Genesis9") && (sObjName != "Genesis9"))) { //no "Genesis9 Mouth" or similar
-					return true;
-				}
-			}*/
-		}
-		return false;
+		return WM2Support.isSupportedFigure(oNode, oWM2Config);
 	}
 
 	function GetAnotherHumanFigureParentedToTheCurrent(oHumanFigure) {
@@ -2839,7 +2847,7 @@
 		var arrNodes = oHumanFigure.getNodeChildren(true);
 		for (var i = 0; i < arrNodes.length; i++) {
 			var oNode = arrNodes[i];
-			if (IsNodeHumanFigure(oNode)) return oNode;
+			if (WM2Support.isSupportedFigureType(oNode, oWM2Config)) return oNode;
 		}
 		return false;
 	}
@@ -2890,6 +2898,7 @@
 	//and false it its parented to another node
 	function FilterParentedToHumanFigureAndNotAnExemption(oChild) {
 	    if (!oChild || oChild.inherits("DzBone") || !oHumanFigure) return false;
+	    if (!bAltPressed && WM2Support.isProtectedCustomAttachment(oChild, oHumanFigure, oWM2Config)) return false;
 	    var oNode = oChild;
 	    while (oNode && !WM2SameNode(oNode, oHumanFigure)) {
 	        if (this && this.indexOf(oNode.name) > -1) return false;
@@ -3203,6 +3212,7 @@
 		var pixImageSave = new Pixmap(dir_icons.filePath("Wearables Manager - Save.png"));
 		dir_icons.deleteLater();
 
+		var arrWM2IconButtons = [];
 		var sHumanLabel = oHumanFigure.getLabel();
 
 
@@ -3232,6 +3242,19 @@
 
 		// 1 Outer V Container
 		var wgroupOuter = new DzVGroupBox(wDlg); //Holds all Groups, TextBox, Buttons
+		var wmSettingsRow = new DzHGroupBox(wgroupOuter);
+		var wmIconRulesButton = WM2SettingsButton(wmSettingsRow, "Icon Rules...", PATH_ICONS, "Wearables Manager - Prop.png");
+		function WM2OpenIconRulesFromDialog() {
+			var result = WM2ShowIconRules(PATH_ICONS);
+			if (result && result.saved) {
+				// Keep this transfer dialog's figure registry while refreshing icon rules.
+				oWM2Config.iconRules = WM2Support.clone(result.config.iconRules);
+				for (var i=0; i<arrWM2IconButtons.length; i++) setWearablesButtonPixmap(arrWM2IconButtons[i].button, oWearablesIcons.GetIconForWearable(arrWM2IconButtons[i].node));
+			}
+		}
+		connect(wmIconRulesButton, "clicked()", wmIconRulesButton, WM2OpenIconRulesFromDialog);
+		var wmFiguresButton = WM2SettingsButton(wmSettingsRow, "Supported Figures...", PATH_ICONS, "Wearables Manager - Group.png");
+		connect(wmFiguresButton, "clicked()", wmFiguresButton, function () { WM2ShowSupportedFigures(PATH_ICONS); });
 
 		// 2 H Container for Scrool areas
 		var wcontScrollsHolder = new DzHGroupBox(wgroupOuter);
@@ -3510,6 +3533,7 @@
 			wImage.buttonStyle = DzPushButton.BTool;
 			wImage.text = "";
 			setWearablesButtonPixmap(wImage, oWearablesIcons.GetIconForWearable(oWearable));
+			arrWM2IconButtons.push({button:wImage,node:oWearable});
 			wImage.wearable = oWearable;
 			connect(wImage, "clicked()", wImage, wImageClicked);
 

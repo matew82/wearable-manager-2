@@ -8,8 +8,9 @@ const baselineRoot=args.length?path.resolve(args[1]):null;
 fs.mkdirSync(baseline,{recursive:true});
 const engines=require('./support/extract.cjs').files;
 const files=[...engines,'Wearables Manager User Guide.dsa'];
+const settingsFiles=['Wearables Manager Icon Rules.dsa','Wearables Manager Supported Figures.dsa','Resources/WM2 Support.dsa','Resources/WM2 Settings UI.dsa'];
 let git='git';
-if(!baselineRoot && cp.spawnSync(git,['--version'],{encoding:'utf8',windowsHide:true}).status!==0){git='C:\Program Files\Git\cmd\git.exe';}
+if(!baselineRoot && cp.spawnSync(git,['--version'],{encoding:'utf8',windowsHide:true}).status!==0){git='C:/Program Files/Git/cmd/git.exe';}
 const baselineCommit='1d15974476ccecaa30f8fe690a9bee6e991194bc';
 for(const file of files){
   let bytes;
@@ -23,7 +24,13 @@ for(const file of files){
   fs.writeFileSync(path.join(baseline,file),bytes);
   new vm.Script(fs.readFileSync(path.join(root,file),'utf8'),{filename:file});
 }
+for(const file of settingsFiles)new vm.Script(fs.readFileSync(path.join(root,file),'utf8'),{filename:file});
 const suites=[
+ ['features/config.cjs',path.join(root,'Resources/WM2 Support.dsa'),path.join(output,'features-config.json')],
+ ['features/icons.cjs','--source-root',root,'--support-source',path.join(root,'Resources/WM2 Support.dsa'),'--integrated'],
+ ['features/figures.cjs','--factory',path.join(root,'Resources/WM2 Support.dsa'),'--output',path.join(output,'features-figures.json')],
+ ['features/ui.cjs'],
+ ['features/integration.cjs','--source-root',root,'--output',path.join(output,'features-integration.json')],
  ['integration.cjs','--source-root',root],
  ['storage/regressions.cjs','--sourceRoot',root,'--expect','after'],
  ['graph/regressions.cjs','--source-root',root,'--mode','source','--output',path.join(output,'graph-results.json')],
@@ -34,7 +41,7 @@ const suites=[
  ['controls/regressions.cjs','--source-root',root],
  ['help/regressions.cjs',path.join(root,'Wearables Manager User Guide.dsa')]
 ];
-const receipt={baselineCommit,baselineRoot,baselineHashesVerified:true,sourceRoot:root,nativeDAZ:false,syntaxFiles:files,suites:[]};
+const receipt={baselineCommit,baselineRoot,baselineHashesVerified:true,sourceRoot:root,nativeDAZ:false,syntaxFiles:[...files,...settingsFiles],suites:[]};
 for(const [name,...args] of suites){
  const r=cp.spawnSync(process.execPath,[path.join(__dirname,name),...args],{cwd:root,encoding:'utf8',windowsHide:true,maxBuffer:4*1024*1024});
  const outputStem=name.replace(/[/\\]/g,'-').replace(/\.cjs$/,'');

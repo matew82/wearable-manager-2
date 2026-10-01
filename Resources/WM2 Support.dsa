@@ -1,0 +1,505 @@
+// Shared ES5 settings support. Include at global scope; including does not access disk.
+var WM2Support = (function () {
+    var FILE_NAME = "WM2 Settings.json";
+    var BUILTINS = ["Genesis", "Genesis2Female", "Genesis2Male", "Genesis3Female", "Genesis3Male", "Genesis8Female", "Genesis8Male", "Genesis8_1Female", "Genesis8_1Male", "Genesis9", "Genesis9_1", "Genesis10", "Genesis10Female", "Genesis10Male"];
+    var MAX_RULES = 256, MAX_FIGURES = 256, MAX_PATTERN = 256;
+    var MAX_NAME = 256, MAX_ICON = 128, MAX_FILE_BYTES = 262144;
+    var serial = 0;
+    var own = Object.prototype.hasOwnProperty;
+    var tag = Object.prototype.toString;
+
+    function array(value) { return tag.call(value) === "[object Array]"; }
+    function object(value) { return value !== null && tag.call(value) === "[object Object]"; }
+    function finiteInteger(value) {
+        return typeof value === "number" && isFinite(value) && value >= 0 && Math.floor(value) === value;
+    }
+    function enumCode(value) {
+        if (finiteInteger(value)) return value;
+        if (!value || typeof value !== "object" || typeof value.valueOf !== "function") return null;
+        try { var code = value.valueOf(); return finiteInteger(code) ? code : null; }
+        catch (e) { return null; }
+    }
+    function cleanString(value, limit) {
+        if (typeof value !== "string" || value.length === 0 || value.length > limit || !/\S/.test(value) || /[\x00-\x1f\x7f]/.test(value)) return false;
+        for (var i = 0; i < value.length; i++) {
+            var code = value.charCodeAt(i);
+            if (code >= 0xd800 && code <= 0xdbff) {
+                if (++i >= value.length || value.charCodeAt(i) < 0xdc00 || value.charCodeAt(i) > 0xdfff) return false;
+            } else if (code >= 0xdc00 && code <= 0xdfff) return false;
+        }
+        return true;
+    }
+    function keysExactly(value, allowed) {
+        var key;
+        for (key in value) {
+            if (!own.call(value, key) || !own.call(allowed, key)) return false;
+        }
+        for (key in allowed) if (own.call(allowed, key) && !own.call(value, key)) return false;
+        return true;
+    }
+    function denseArray(value, limit) {
+        if (!array(value) || value.length > limit) return false;
+        for (var i = 0; i < value.length; i++) if (!own.call(value, String(i))) return false;
+        for (var key in value) {
+            if (!own.call(value, key) || !/^(0|[1-9][0-9]*)$/.test(key) || Number(key) >= value.length) return false;
+        }
+        return true;
+    }
+    function iconBasename(value) {
+        if (!cleanString(value, MAX_ICON) || !/\.png$/i.test(value) || value.length <= 4) return false;
+        if (/[<>:"\/\\|?*]/.test(value) || /[. ]$/.test(value) || /^[. ]/.test(value)) return false;
+        var stem = value.substring(0, value.length - 4);
+        if (!/\S/.test(stem) || /[. ]$/.test(stem)) return false;
+        return !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(stem);
+    }
+    function cloneValue(value, ancestors, depth) {
+        if (depth > 16) throw new Error("Settings clone exceeds the maximum nesting depth.");
+        if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+        if (typeof value === "number" && isFinite(value)) return value;
+        if (!array(value) && !object(value)) throw new Error("Settings clone requires JSON values.");
+        for (var a = 0; a < ancestors.length; a++) if (ancestors[a] === value) throw new Error("Settings clone cannot copy a cycle.");
+        var next = ancestors.slice(0); next.push(value);
+        var result = array(value) ? [] : {}, key;
+        if (array(value)) {
+            if (!denseArray(value, 65536)) throw new Error("Settings clone requires a dense array.");
+            for (var i = 0; i < value.length; i++) result.push(cloneValue(value[i], next, depth + 1));
+        } else {
+            for (key in value) {
+                if (!own.call(value, key) || key === "__proto__" || key === "constructor" || key === "prototype") throw new Error("Settings clone has an unsupported key.");
+                result[key] = cloneValue(value[key], next, depth + 1);
+            }
+        }
+        return result;
+    }
+    function clone(value) { return cloneValue(value, [], 0); }
+    function defaults() { return {schema:1, iconRules:[], supportedFigures:BUILTINS.slice(0)}; }
+    function invalid(message) { return {ok:false, config:null, message:message}; }
+    function validate(config) {
+        try {
+            if (!object(config) || !keysExactly(config, {schema:1, iconRules:1, supportedFigures:1})) return invalid("Settings must contain only schema, iconRules and supportedFigures.");
+            if (config.schema !== 1) return invalid("Unsupported settings schema; this version supports schema 1.");
+            if (!denseArray(config.iconRules, MAX_RULES)) return invalid("iconRules must be a dense array with at most " + MAX_RULES + " entries.");
+            if (!denseArray(config.supportedFigures, MAX_FIGURES)) return invalid("supportedFigures must be a dense array with at most " + MAX_FIGURES + " entries.");
+            var normalized = {schema:1, iconRules:[], supportedFigures:[]};
+            var ruleSeen = {}, nameSeen = {}, kinds = {exactName:1, exactLabel:1, labelPrefix:1, namePrefix:1};
+            for (var i = 0; i < config.iconRules.length; i++) {
+                var rule = config.iconRules[i];
+                if (!object(rule) || !keysExactly(rule, {kind:1, pattern:1, icon:1})) return invalid("Icon rule " + (i + 1) + " must contain only kind, pattern and icon.");
+                if (typeof rule.kind !== "string" || !own.call(kinds, rule.kind)) return invalid("Icon rule " + (i + 1) + " has an unsupported kind.");
+                if (!cleanString(rule.pattern, MAX_PATTERN)) return invalid("Icon rule " + (i + 1) + " requires a nonempty pattern of at most " + MAX_PATTERN + " characters without control characters.");
+                if (rule.kind === "exactLabel" && rule.pattern.replace(/ \([0-9]+\)$/, "").length === 0) return invalid("Icon rule " + (i + 1) + " requires a nonempty label after removing its terminal numeric copy suffix.");
+                if (!iconBasename(rule.icon)) return invalid("Icon rule " + (i + 1) + " requires a PNG basename without a path or reserved filename.");
+                var ruleKey = "_" + rule.kind + ":" + rule.pattern;
+                if (own.call(ruleSeen, ruleKey)) return invalid("Icon rule " + (i + 1) + " duplicates an existing kind and literal pattern.");
+                ruleSeen[ruleKey] = true;
+                normalized.iconRules.push({kind:rule.kind, pattern:rule.pattern, icon:rule.icon});
+            }
+            for (var n = 0; n < config.supportedFigures.length; n++) {
+                var name = config.supportedFigures[n];
+                if (!cleanString(name, MAX_NAME)) return invalid("Supported figure " + (n + 1) + " requires a nonempty exact internal name of at most " + MAX_NAME + " characters without control characters.");
+                var nameKey = "_" + name;
+                if (own.call(nameSeen, nameKey)) return invalid("Supported figure " + (n + 1) + " duplicates an exact internal name.");
+                nameSeen[nameKey] = true;
+                normalized.supportedFigures.push(name);
+            }
+            return {ok:true, config:normalized, message:""};
+        } catch (e) { return invalid("Settings could not be validated: " + String(e)); }
+    }
+    function fileError(file) {
+        try { return String(file.errorString()); } catch (e) { return "File operation failed."; }
+    }
+    function freshFile(path) {
+        var file = new DzFile(path);
+        file.setCaching(false);
+        return file;
+    }
+    function settingsPath(resourcePath) {
+        if (typeof resourcePath !== "string" || resourcePath.length === 0 || /[\x00-\x1f\x7f]/.test(resourcePath)) throw new Error("An absolute Resources directory is required.");
+        var dir = new DzFileInfo(resourcePath);
+        dir.setCaching(false);
+        if (!dir.isAbsolute() || !dir.exists() || !dir.isDir()) throw new Error("Resources must be an existing absolute directory.");
+        return String(dir.absoluteFilePath()).replace(/[\/\\]+$/, "") + "/" + FILE_NAME;
+    }
+    function readFile(path) {
+        var file = null, opened = false;
+        try {
+            file = freshFile(path);
+            if (!file.exists()) return {ok:true, exists:false, raw:"", rawToken:"WM2:missing", message:""};
+            if (!file.isFile() || file.isSymLink()) return {ok:false, exists:true, rawToken:null, message:"Settings path is not a regular, nonlinked file: " + path};
+            var size = file.size();
+            if (!finiteInteger(size) || size > MAX_FILE_BYTES) return {ok:false, exists:true, rawToken:null, message:"Settings file exceeds the " + MAX_FILE_BYTES + " byte limit or its size is unavailable: " + path};
+            if (file.open(DzFile.ReadOnly) !== true) return {ok:false, exists:true, rawToken:null, message:"Cannot read settings: " + fileError(file)};
+            opened = true;
+            var raw = file.read(), code = enumCode(file.error()), noError = enumCode(DzFile.NoError);
+            if (typeof raw !== "string" || noError === null || code !== noError || raw.length > MAX_FILE_BYTES) return {ok:false, exists:true, rawToken:null, message:"Cannot read settings completely: " + fileError(file)};
+            // A fresh size check catches truncation during read; bytes may exceed string length for Unicode.
+            if (file.size() !== size) return {ok:false, exists:true, rawToken:null, message:"Settings changed while being read; load them again."};
+            return {ok:true, exists:true, raw:raw, rawToken:"WM2:present:" + raw, message:""};
+        } catch (e) { return {ok:false, exists:true, rawToken:null, message:"Cannot read settings: " + String(e)}; }
+        finally { if (opened) try { file.close(); } catch (closeError) {} }
+    }
+    function parsedState(read) {
+        if (!read.ok) return {config:defaults(), status:"unreadable", message:read.message, rawToken:null, readOnly:true};
+        if (!read.exists) return {config:defaults(), status:"missing", message:"", rawToken:read.rawToken, readOnly:false};
+        var parsed;
+        try { parsed = JSON.parse(read.raw.replace(/^\ufeff/, "")); }
+        catch (e) { return {config:defaults(), status:"invalid", message:"WM2 Settings.json is not valid JSON. Defaults are active; an explicit Save can repair it while retaining a backup.", rawToken:read.rawToken, readOnly:false}; }
+        if (object(parsed) && typeof parsed.schema === "number" && isFinite(parsed.schema) && parsed.schema > 1) return {config:defaults(), status:"future-schema", message:"WM2 Settings.json uses schema " + parsed.schema + ". Defaults are active; this version will not overwrite the newer settings.", rawToken:read.rawToken, readOnly:true};
+        var result = validate(parsed);
+        if (!result.ok) return {config:defaults(), status:"invalid", message:result.message + " Defaults are active; an explicit Save can repair the file while retaining a backup.", rawToken:read.rawToken, readOnly:false};
+        return {config:result.config, status:"ok", message:"", rawToken:read.rawToken, readOnly:false};
+    }
+    function load(resourcePath) {
+        try { return parsedState(readFile(settingsPath(resourcePath))); }
+        catch (e) { return {config:defaults(), status:"path-error", message:String(e), rawToken:null, readOnly:true}; }
+    }
+    function siblingPath(path, suffix) {
+        for (var i = 0; i < 16; i++) {
+            serial++;
+            var candidate = path + ".wm2-" + suffix + "-" + new Date().getTime() + "-" + serial + "-" + Math.floor(Math.random() * 0x100000000).toString(16);
+            if (!freshFile(candidate).exists()) return candidate;
+        }
+        throw new Error("Could not allocate a unique settings " + suffix + " file.");
+    }
+    function asciiJSON(config) {
+        return (JSON.stringify(config, null, 2) + "\n").replace(/[\u007f-\uffff]/g, function (value) {
+            var hex = value.charCodeAt(0).toString(16);
+            return "\\u" + ("0000" + hex).slice(-4);
+        });
+    }
+    function writeTemporary(path, raw) {
+        var file = null, opened = false, owned = false;
+        try {
+            file = freshFile(path);
+            if (file.exists()) return {ok:false, owned:false, message:"Temporary settings file already exists."};
+            if (file.open(DzFile.WriteOnly) !== true) return {ok:false, owned:false, message:"Cannot open temporary settings: " + fileError(file)};
+            opened = true; owned = true;
+            var written = file.write(raw), code = enumCode(file.error()), noError = enumCode(DzFile.NoError);
+            if (!finiteInteger(written) || written !== raw.length || noError === null || code !== noError) return {ok:false, owned:true, message:"Temporary settings write was incomplete: " + fileError(file)};
+            file.close(); opened = false;
+            var reread = readFile(path);
+            if (!reread.ok || !reread.exists || reread.raw !== raw) return {ok:false, owned:true, message:"Temporary settings readback did not match the complete write."};
+            return {ok:true, owned:true, message:""};
+        } catch (e) { return {ok:false, owned:owned, message:"Temporary settings write failed: " + String(e)}; }
+        finally { if (opened) try { file.close(); } catch (closeError) {} }
+    }
+    function removeOwned(path) {
+        if (!path) return "";
+        try {
+            var file = freshFile(path);
+            if (!file.exists()) return "";
+            if (file.remove() === true) return "";
+        } catch (e) {}
+        return " Temporary or backup file retained at: " + path;
+    }
+    function renameFile(from, to) {
+        return freshFile(from).rename(to) === true;
+    }
+    function rollback(path, backup, before) {
+        try {
+            var current = readFile(path);
+            if (current.ok && current.exists && current.rawToken === before.rawToken) return {ok:true, message:""};
+            if (!current.ok || current.exists) return {ok:false, message:"Original settings remain in backup; the destination changed or is unreadable. Recover manually from: " + backup};
+            if (!renameFile(backup, path)) return {ok:false, message:"Original settings could not be restored automatically. Recover from: " + backup};
+            var restored = readFile(path);
+            if (!restored.ok || restored.rawToken !== before.rawToken) return {ok:false, message:"Restored settings could not be verified. Recovery source: " + path};
+            return {ok:true, message:""};
+        } catch (e) { return {ok:false, message:"Original settings recovery failed: " + String(e) + ". Backup: " + backup}; }
+    }
+    function save(resourcePath, config, expectedRawToken) {
+        var validated = validate(config);
+        if (!validated.ok) return {ok:false, config:null, rawToken:null, message:validated.message};
+        var path = null, temp = null, backup = null, before = null, moved = false, published = false, tempOwned = false;
+        var candidate = validated.config;
+        function failure(message, token) { return {ok:false, config:clone(candidate), rawToken:token, message:message}; }
+        try {
+            path = settingsPath(resourcePath);
+            before = readFile(path);
+            if (!before.ok) return failure(before.message, null);
+            var oldState = parsedState(before);
+            if (oldState.readOnly) return failure(oldState.message, before.rawToken);
+            if (typeof expectedRawToken !== "string" || expectedRawToken !== before.rawToken) return failure("Settings changed since they were loaded. Reload them before saving.", before.rawToken);
+            var raw = asciiJSON(candidate);
+            if (raw.length > MAX_FILE_BYTES) return failure("Serialized settings exceed the " + MAX_FILE_BYTES + " byte limit.", before.rawToken);
+            if (before.exists && before.raw === raw) return {ok:true, config:clone(candidate), rawToken:before.rawToken, message:""};
+            temp = siblingPath(path, "tmp");
+            var write = writeTemporary(temp, raw);
+            tempOwned = write.owned;
+            if (!write.ok) return failure(write.message + (tempOwned ? removeOwned(temp) : ""), before.rawToken);
+            var current = readFile(path);
+            if (!current.ok || current.rawToken !== before.rawToken) return failure("Settings changed while Save was preparing the file. Reload them before saving." + removeOwned(temp), current.ok ? current.rawToken : null);
+            if (before.exists) {
+                backup = siblingPath(path, "bak");
+                if (!renameFile(path, backup)) return failure("Could not retain the original settings as a backup; Save was stopped." + removeOwned(temp), before.rawToken);
+                moved = true;
+                var savedOriginal = readFile(backup);
+                if (!savedOriginal.ok || savedOriginal.rawToken !== before.rawToken) {
+                    var badBackupRecovery = rollback(path, backup, before);
+                    return failure("The original settings backup could not be verified. " + badBackupRecovery.message + removeOwned(temp), badBackupRecovery.ok ? before.rawToken : null);
+                }
+            }
+            if (!renameFile(temp, path)) {
+                var recovery = moved ? rollback(path, backup, before) : {ok:true, message:""};
+                return failure("Could not publish the verified settings. " + recovery.message + removeOwned(temp), recovery.ok ? before.rawToken : null);
+            }
+            published = true; temp = null; tempOwned = false;
+            var verified = readFile(path);
+            if (!verified.ok || verified.raw !== raw) return failure("Saved settings could not be verified; no success is reported. " + (backup ? "Original settings are retained at: " + backup : "Inspect the settings file: " + path), verified.ok ? verified.rawToken : null);
+            var message = "";
+            if (backup && oldState.status === "invalid") message = "Repaired settings saved. Original invalid settings retained at: " + backup;
+            else if (backup) message = removeOwned(backup);
+            return {ok:true, config:clone(candidate), rawToken:verified.rawToken, message:message};
+        } catch (e) {
+            var detail = String(e), restored = null;
+            if (moved && !published) { restored = rollback(path, backup, before); detail += " " + restored.message; }
+            else if (backup) detail += " Original settings retained at: " + backup;
+            return failure("Settings Save failed: " + detail + (tempOwned ? removeOwned(temp) : ""), restored && restored.ok ? before.rawToken : null);
+        }
+    }
+    return {defaults:defaults, validate:validate, load:load, save:save, clone:clone};
+})();
+
+(function () {
+var methods = {
+/* ES5 members to append to WM2Support. No filesystem, scene mutation or UI calls. */
+normalizeCopyLabel: function (value) {
+    if (typeof value != "string") return "";
+    return value.replace(/ \([0-9]+\)$/, "");
+},
+
+iconNodeName: function (node) {
+    if (!node) return "";
+    try {
+        if (typeof node.name == "string") return node.name;
+        if (typeof node.objectName == "string") return node.objectName;
+        if (typeof node.getName == "function") {
+            var value = node.getName();
+            if (typeof value == "string") return value;
+        }
+        if (typeof node.objectName == "function") {
+            var value = node.objectName();
+            if (typeof value == "string") return value;
+        }
+    } catch (e) {}
+    return "";
+},
+
+iconNodeLabel: function (node) {
+    if (!node) return "";
+    try {
+        if (typeof node.getLabel == "function") {
+            var value = node.getLabel();
+            if (typeof value == "string") return value;
+        }
+        if (typeof node.label == "string") return node.label;
+    } catch (e) {}
+    return "";
+},
+
+matchIcon: function (rules, node) {
+    var none = {matched:false, icon:null, ruleIndex:-1, kind:null, pattern:null};
+    if (!node || !Array.isArray(rules)) return none;
+    var name = this.iconNodeName(node), label = this.iconNodeLabel(node);
+    var exactLabel = this.normalizeCopyLabel(label), best = null;
+    for (var i = 0; i < rules.length; i++) {
+        var rule = rules[i];
+        if (!rule || typeof rule.pattern != "string" || rule.pattern.length == 0 || typeof rule.icon != "string" || rule.icon.length == 0) continue;
+        var rank = 2, length = 0, prefixKindRank = 0, matched = false;
+        if (rule.kind == "exactName") {
+            rank = 0; matched = name == rule.pattern;
+        } else if (rule.kind == "exactLabel") {
+            rank = 1;
+            var pattern = this.normalizeCopyLabel(rule.pattern);
+            matched = pattern.length > 0 && exactLabel == pattern;
+        } else if (rule.kind == "labelPrefix") {
+            length = rule.pattern.length; prefixKindRank = 0;
+            matched = label.indexOf(rule.pattern) == 0;
+        } else if (rule.kind == "namePrefix") {
+            length = rule.pattern.length; prefixKindRank = 1;
+            matched = name.indexOf(rule.pattern) == 0;
+        } else continue;
+        if (!matched) continue;
+        if (!best || rank < best.rank || (rank == best.rank && rank == 2 && (length > best.length || (length == best.length && prefixKindRank < best.prefixKindRank)))) {
+            best = {rank:rank, length:length, prefixKindRank:prefixKindRank, icon:rule.icon, ruleIndex:i, kind:rule.kind, pattern:rule.pattern};
+        }
+    }
+    return best ? {matched:true, icon:best.icon, ruleIndex:best.ruleIndex, kind:best.kind, pattern:best.pattern} : none;
+},
+
+previewIconRules: function (rules, nodes, limit) {
+    var cap = typeof limit == "number" && isFinite(limit) ? Math.floor(limit) : 200;
+    cap = Math.max(0, Math.min(2000, cap));
+    if (!Array.isArray(nodes)) nodes = [];
+    var rows = [], matched = 0, count = Math.min(nodes.length, cap);
+    for (var i = 0; i < count; i++) {
+        var name = this.iconNodeName(nodes[i]), label = this.iconNodeLabel(nodes[i]);
+        var result = this.matchIcon(rules, {name:name, label:label});
+        if (result.matched) matched++;
+        rows.push({nodeIndex:i, name:name, label:label, normalizedLabel:this.normalizeCopyLabel(label), match:result});
+    }
+    return {rows:rows, scanned:count, matched:matched, total:nodes.length, truncated:count < nodes.length, limit:cap};
+}
+
+};
+for (var key in methods) if (Object.prototype.hasOwnProperty.call(methods,key)) WM2Support[key]=methods[key];
+})();
+
+// ES5 module extension. Append to the central WM2Support module and invoke once:
+// WM2InstallSupportedFigures(WM2Support). No Scene/configuration writes occur here.
+function WM2InstallSupportedFigures(oSupport) {
+    if (!oSupport || typeof oSupport !== "object") throw new Error("Wearables support module is unavailable.");
+    if (typeof oSupport.defaults !== "function") throw new Error("Wearables support defaults are unavailable.");
+    var oDefaults = oSupport.defaults();
+    if (!oDefaults || oDefaults.schema !== 1 || !Array.isArray(oDefaults.supportedFigures)) throw new Error("Wearables support defaults are invalid.");
+    // The shared configuration factory is the sole source of shipped defaults.
+    var arrBuiltInNames = oDefaults.supportedFigures.slice(0);
+
+    function key(oNode) {
+        if (!oNode) return null;
+        try {
+            if (!oNode.inherits("DzNode")) return null;
+            var vID = oNode.elementID;
+            if (vID === null || typeof vID === "undefined") return null;
+            var sID = String(vID), sClass = String(oNode.className());
+            return sID && sClass ? { id: sID, type: sClass } : null;
+        } catch (e) { return null; }
+    }
+    function same(oA, oB) {
+        var a = key(oA), b = key(oB);
+        return !!(a && b && a.id === b.id && a.type === b.type);
+    }
+    function sceneNodes() {
+        try { return Scene.getNodeList(); } catch (e) { return null; }
+    }
+    function live(oNode, arrNodes) {
+        var oKey = key(oNode), oFound = null;
+        if (!oKey || !arrNodes) return null;
+        for (var i = 0; i < arrNodes.length; i++) {
+            if (!same(oNode, arrNodes[i])) continue;
+            if (oFound) return null; // Repeated session identity is ambiguous, regardless of name.
+            oFound = arrNodes[i];
+        }
+        return oFound;
+    }
+    function internalName(oNode) {
+        try { return typeof oNode.name === "string" ? oNode.name : ""; } catch (e) { return ""; }
+    }
+    function names(oConfig) {
+        if (!oConfig && typeof oSupport.defaults === "function") oConfig = oSupport.defaults();
+        return oConfig && oConfig.schema === 1 && Array.isArray(oConfig.supportedFigures) ? oConfig.supportedFigures : null;
+    }
+    function skeleton(oNode) {
+        return !!(oNode && oNode.inherits("DzSkeleton") && !oNode.inherits("DzBone") && !oNode.inherits("DzGroupNode"));
+    }
+    function figureType(oNode) {
+        try { return !!(skeleton(oNode) && typeof oNode.getFollowTarget === "function" && !oNode.getFollowTarget()); }
+        catch (e) { return false; }
+    }
+    function mainFigure(oNode, arrNodes) {
+        try {
+            if (!figureType(oNode)) return false;
+            // A figure still parented under another skeleton/bone is an attachment,
+            // even while its FitTo is temporarily detached for storage.
+            var oParent = oNode.getNodeParent(), arrSeen = [];
+            while (oParent) {
+                oParent = live(oParent, arrNodes);
+                if (!oParent || oParent.inherits("DzBone") || oParent.inherits("DzSkeleton")) return false;
+                for (var i = 0; i < arrSeen.length; i++) if (same(arrSeen[i], oParent)) return false;
+                arrSeen.push(oParent);
+                if (arrSeen.length > arrNodes.length) return false;
+                oParent = oParent.getNodeParent();
+            }
+            return true;
+        } catch (e) { return false; }
+    }
+    function selected(oNode, arrNodes) {
+        oNode = live(oNode, arrNodes);
+        if (!oNode) return null;
+        try {
+            if (!oNode.inherits("DzBone")) return mainFigure(oNode, arrNodes) ? oNode : null;
+            var oBone = oNode, oCurrent = oBone, arrSeen = [];
+            while (oCurrent && oCurrent.inherits("DzBone")) {
+                for (var i = 0; i < arrSeen.length; i++) if (same(arrSeen[i], oCurrent)) return null;
+                arrSeen.push(oCurrent);
+                if (arrSeen.length > arrNodes.length) return null;
+                oCurrent = live(oCurrent.getNodeParent(), arrNodes);
+            }
+            if (!oCurrent || !mainFigure(oCurrent, arrNodes)) return null;
+            // getSkeleton is documented on DzNode. If available, it must agree with
+            // the bone-only parent chain; never cross an arbitrary group or prop.
+            if (typeof oBone.getSkeleton === "function" && !same(oBone.getSkeleton(), oCurrent)) return null;
+            return oCurrent;
+        } catch (e) { return null; }
+    }
+    function supported(oNode, oConfig, arrNodes) {
+        var arrNames = names(oConfig), oLive = live(oNode, arrNodes);
+        if (!arrNames || !oLive || !mainFigure(oLive, arrNodes)) return false;
+        var sName = internalName(oLive);
+        return !!sName && arrNames.indexOf(sName) >= 0;
+    }
+
+    oSupport.builtInFigureNames = function () { return arrBuiltInNames.slice(0); };
+    oSupport.selectedFigure = function (oNode) { return selected(oNode, sceneNodes()); };
+    oSupport.isSupportedFigure = function (oNode, oConfig) { return supported(oNode, oConfig, sceneNodes()); };
+    // The existing nested-figure preflight must recognize supported independent
+    // figures below a different figure. They remain ineligible as main owners.
+    oSupport.isSupportedFigureType = function (oNode, oConfig) {
+        var arrNames = names(oConfig), oLive = live(oNode, sceneNodes());
+        if (!arrNames || !oLive || !figureType(oLive)) return false;
+        var sName = internalName(oLive);
+        return !!sName && arrNames.indexOf(sName) >= 0;
+    };
+    oSupport.isCustomFigure = function (oNode, oConfig) {
+        return supported(oNode, oConfig, sceneNodes()) && arrBuiltInNames.indexOf(internalName(oNode)) < 0;
+    };
+    oSupport.addSupportedFigure = function (oConfig, oNode) {
+        var oFigure = null;
+        try {
+            if (typeof oSupport.validate !== "function" || typeof oSupport.clone !== "function") throw new Error("Supported-figure configuration services are unavailable.");
+            var oValidated = oSupport.validate(oConfig);
+            if (!oValidated.ok) return { ok: false, config: oConfig, message: oValidated.message, figure: null };
+            oFigure = selected(oNode, sceneNodes());
+            if (!oFigure) return { ok: false, config: oConfig, message: "Select a live independent figure or one of its bones. A fitted wearable or attached figure cannot be registered as an owner.", figure: null };
+            var sName = internalName(oFigure);
+            if (!sName) return { ok: false, config: oConfig, message: "The figure must have a nonempty internal name.", figure: oFigure };
+            var oNext = oSupport.clone(oValidated.config), bExisting = oNext.supportedFigures.indexOf(sName) >= 0;
+            if (!bExisting) oNext.supportedFigures.push(sName);
+            var oFinal = oSupport.validate(oNext);
+            if (!oFinal.ok) return { ok: false, config: oConfig, message: oFinal.message, figure: oFigure };
+            return { ok: true, config: oFinal.config, message: bExisting ? "Figure type '" + sName + "' is already supported." : "Figure type '" + sName + "' is now supported.", figure: oFigure };
+        } catch (e) { return { ok: false, config: oConfig, message: String(e), figure: oFigure }; }
+    };
+    oSupport.isProtectedCustomAttachment = function (oNode, oOwner, oConfig) {
+        var arrNodes = sceneNodes(), oLiveOwner = live(oOwner, arrNodes);
+        if (!supported(oLiveOwner, oConfig, arrNodes) || arrBuiltInNames.indexOf(internalName(oLiveOwner)) >= 0) return false;
+        var oCurrent = live(oNode, arrNodes);
+        if (!oCurrent) return true;
+        try {
+            if (same(oCurrent, oLiveOwner)) return true;
+            // DzSkeleton has no graft list; DzFigure provides this documented API.
+            if (!oLiveOwner.inherits("DzFigure")) return false;
+            if (typeof oLiveOwner.getNumGraftFigures !== "function" || typeof oLiveOwner.getGraftFigure !== "function") return true;
+            var nCount = oLiveOwner.getNumGraftFigures(), arrGrafts = [];
+            if (typeof nCount !== "number" || !isFinite(nCount) || nCount < 0 || Math.floor(nCount) !== nCount || nCount > arrNodes.length) return true;
+            for (var i = 0; i < nCount; i++) {
+                var oGraft = live(oLiveOwner.getGraftFigure(i), arrNodes);
+                if (!oGraft) return true; // Unknown graft ownership is preserved, not guessed.
+                arrGrafts.push(oGraft);
+            }
+            var arrSeen = [];
+            while (oCurrent && !same(oCurrent, oLiveOwner)) {
+                for (var i = 0; i < arrGrafts.length; i++) if (same(oCurrent, arrGrafts[i])) return true;
+                for (var i = 0; i < arrSeen.length; i++) if (same(oCurrent, arrSeen[i])) return true;
+                arrSeen.push(oCurrent);
+                if (arrSeen.length > arrNodes.length) return true;
+                var oParent = oCurrent.getNodeParent();
+                if (!oParent) return false;
+                oCurrent = live(oParent, arrNodes);
+                if (!oCurrent) return true;
+            }
+            return false;
+        } catch (e) { return true; }
+    };
+    return oSupport;
+}
+WM2InstallSupportedFigures(WM2Support);

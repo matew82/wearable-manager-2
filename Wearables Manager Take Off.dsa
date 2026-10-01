@@ -10,11 +10,16 @@
 
  */
 
+var sWM2ResourcesPath = new DzFileInfo(getScriptFileName()).path() + "/Resources";
+include(sWM2ResourcesPath + "/WM2 Support.dsa");
+include(sWM2ResourcesPath + "/WM2 Settings UI.dsa");
+
 (function () {
 	/*-----------------------------------------------------------------*\
 							   DECLARATIONS
 	\*-----------------------------------------------------------------*/
 
+	var PATH_ICONS = sWM2ResourcesPath;
 	var PATH_TEMP = App.getTempPath() + "/matew/";
 
 	var DATA_ITEM_NAME = "MatewWearables";
@@ -29,6 +34,7 @@
 
 	var ARRAY_SEPARATOR = ",,";
 	var ARR_HUMAN_FIGURES_NAMES = ["Genesis", "Genesis2Female", "Genesis2Male", "Genesis3Female", "Genesis3Male", "Genesis8Female", "Genesis8Male", "Genesis8_1Female", "Genesis8_1Male", "Genesis9", "Genesis9_1", "Genesis10", "Genesis10Female", "Genesis10Male"];
+	var oWM2Config = WM2Support.load(PATH_ICONS).config;
 
 	var bReturnBelongings = false;
 	var bUseTransferMark = true;
@@ -502,7 +508,7 @@
 	\*-----------------------------------------------------------------*/
 	if (!CheckForAnotherProcessActive()) return;
 	if (!(oNode = Scene.getPrimarySelection())) return err("Please, select a human figure to proceed.");
-	if (!(oHumanFigure = GetCurrentHumanFigure(oNode))) return err("No human figure selected."); //get genesis figure
+	if (!(oHumanFigure = GetCurrentHumanFigure(oNode))) return err("Select a supported figure. Use Wearables Manager Supported Figures to add a custom figure."); //get genesis figure
 	var oAnotherFigure = GetAnotherHumanFigureParentedToTheCurrent(oHumanFigure);
 	if (oAnotherFigure) return err("Human figure '" + oAnotherFigure.getLabel() + "' is parented to " + oHumanFigure.getLabel() + ". This could potentially cause problems. Please unparent it before continuing.");
 
@@ -932,20 +938,7 @@
 	}
 
 	function IsNodeHumanFigure(oNode) {
-
-		if (oNode.inherits("DzFigure")) {
-			var sObjName = oNode.objectName;
-			if (ARR_HUMAN_FIGURES_NAMES.indexOf(sObjName) > -1) return true;
-			/*
-			if (sObjName.startsWith("Genesis")) {
-				//found Genesis3.. or Genesis8... or Genesis9...
-				//if (sObjName.startsWith("Genesis9") && (sObjName != "Genesis9")) return false; //no "Genesis9 Mouth" or similar
-				if (!(sObjName.startsWith("Genesis9") && (sObjName != "Genesis9"))) { //no "Genesis9 Mouth" or similar
-					return true;
-				}
-			}*/
-		}
-		return false;
+		return WM2Support.isSupportedFigure(oNode, oWM2Config);
 	}
 
 	function GetAnotherHumanFigureParentedToTheCurrent(oHumanFigure) {
@@ -953,7 +946,7 @@
 		var arrNodes = oHumanFigure.getNodeChildren(true);
 		for (var i = 0; i < arrNodes.length; i++) {
 			var oNode = arrNodes[i];
-			if (IsNodeHumanFigure(oNode)) return oNode;
+			if (WM2Support.isSupportedFigureType(oNode, oWM2Config)) return oNode;
 		}
 		return false;
 	}
@@ -1004,6 +997,7 @@
 	//and false it its parented to another node
 	function FilterParentedToHumanFigureAndNotAnExemption(oChild) {
 	    if (!oChild || oChild.inherits("DzBone") || !oHumanFigure) return false;
+	    if (!bAltPressed && WM2Support.isProtectedCustomAttachment(oChild, oHumanFigure, oWM2Config)) return false;
 	    var oNode = oChild;
 	    while (oNode && !WM2SameNode(oNode, oHumanFigure)) {
 	        if (this && this.indexOf(oNode.name) > -1) return false;

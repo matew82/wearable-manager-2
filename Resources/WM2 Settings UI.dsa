@@ -1,0 +1,243 @@
+// Shared settings UI proposal. ES5; loading this file does not construct widgets,
+// read/write preferences, or touch the scene. Root owns product integration.
+// Requires the central WM2Support object before calling either public dialog.
+
+function WM2SettingsFont(widget, heading) {
+    var font;
+    try { font = new Font(widget.font); } catch (e) { font = new Font(); }
+    var base = Number(font.pointSize);
+    if (!isFinite(base) || base <= 0) base = 10;
+    font.pointSize = heading ? Math.max(16, base * 1.45) : base;
+    font.bold = !!heading;
+    if (heading) {
+        var families = [], candidates = ["Georgia", "Segoe UI", "Arial", "DejaVu Sans", "Liberation Sans"];
+        try { if (typeof font.families == "function") families = font.families(); } catch (e) {}
+        var chosen = "Sans Serif";
+        for (var i = 0; i < candidates.length; i++) {
+            for (var j = 0; j < families.length; j++) {
+                if (String(families[j]).toLowerCase() === candidates[i].toLowerCase()) { chosen = String(families[j]); break; }
+            }
+            if (chosen !== "Sans Serif") break;
+        }
+        font.family = chosen;
+    }
+    return font;
+}
+function WM2SettingsMetrics(widget) {
+    var font = WM2SettingsFont(widget, false), base = Number(font.pointSize);
+    var scale = Math.max(1, Math.min(1.75, isFinite(base) ? base / 10 : 1));
+    return { margin:Math.ceil(10*scale), spacing:Math.ceil(8*scale), fieldHeight:Math.ceil(28*scale), buttonHeight:Math.ceil(30*scale), iconSize:18, listHeight:Math.ceil(120*scale), previewHeight:Math.ceil(90*scale) };
+}
+function WM2SettingsCSS(widget, css) {
+    try {
+        var native = widget.getWidget();
+        if (typeof native.setStyleSheet == "function") native.setStyleSheet(css);
+        else native.styleSheet = css;
+        return true;
+    } catch (e) { return false; }
+}
+function WM2SettingsPlainLabel(parent, text) {
+    var label = new DzLabel(parent);
+    label.wordWrap = true;
+    if (typeof DzLabel.PlainText != "undefined") { label.textFormat = DzLabel.PlainText; label.text = String(text); }
+    else label.text = String(text).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    return label;
+}
+function WM2SettingsHeading(parent, text, color) {
+    var label = WM2SettingsPlainLabel(parent, text);
+    label.font = WM2SettingsFont(label, true);
+    label.alignment = DzLabel.AlignHCenter;
+    var safeColor = /^#[0-9a-f]{6}$/i.test(String(color)) ? String(color) : "#87c9ff";
+    WM2SettingsCSS(label, "QLabel { color:" + safeColor + "; }");
+    return label;
+}
+function WM2SettingsButton(parent, text, resourcePath, iconFilename) {
+    var button = new DzPushButton(parent), metrics = WM2SettingsMetrics(button);
+    button.text = String(text); button.font = WM2SettingsFont(button, false); button.minHeight = metrics.buttonHeight;
+    var textWidth = String(text).length * 7;
+    try { if (typeof button.font.size == "function") textWidth = Number(button.font.size(String(text)).width); } catch (e) {}
+    if (!isFinite(textWidth)) textWidth = String(text).length * 7;
+    button.minWidth = Math.max(80, Math.ceil(textWidth) + metrics.iconSize + 30);
+    var loaded = false, image = null, scaledImage = null;
+    try {
+        if (typeof resourcePath == "string" && resourcePath && typeof iconFilename == "string" && /^[^\\/:\x00-\x1f]+\.png$/i.test(iconFilename)) {
+            var pixmap = new Pixmap(resourcePath.replace(/[\\/]+$/, "") + "/" + iconFilename);
+            if (pixmap && !pixmap.isNull()) {
+                // Scale the native pixmap for DAZ4; Qt6 also needs an explicit iconSize.
+                image = pixmap.toImage();
+                var width = Number(pixmap.width), height = Number(pixmap.height), factor = metrics.iconSize / Math.max(width, height);
+                if (width > 0 && height > 0 && typeof image.smoothScale == "function") {
+                    var scaled = new Pixmap();
+                    scaledImage=image.smoothScale(Math.max(1,Math.round(width*factor)),Math.max(1,Math.round(height*factor)));
+                    scaled.fromImage(scaledImage);
+                    if (!scaled.isNull()) pixmap = scaled;
+                }
+                button.pixmap = pixmap; loaded = true;
+                try { button.getWidget().iconSize = new Size(metrics.iconSize,metrics.iconSize); } catch (e) {}
+            }
+        }
+    } catch (e) { loaded = false; }
+    finally { try { if (scaledImage && typeof scaledImage.deleteLater == "function") scaledImage.deleteLater(); } catch (e) {} try { if (image && typeof image.deleteLater == "function") image.deleteLater(); } catch (e) {} }
+    // Keep the icon slot in the text fallback as well as the button's minimum width.
+    WM2SettingsCSS(button, "QPushButton { padding:5px 8px;" + (loaded ? "" : " padding-left:32px;") + " }");
+    return button;
+}
+function WM2SettingsDialog(title, resourcePath) {
+    var dialog = new DzBasicDialog();
+    dialog.caption = String(title); dialog.sizeGripEnabled = true;
+    dialog.showHelpButton(false); dialog.showApplyButton(false);
+    dialog.setAcceptButtonText("Save"); dialog.setCancelButtonText("Cancel");
+    // Documented custom button slots provide existing PNGs without searching for
+    // undocumented names of the built-in buttons.
+    dialog.showAcceptButton(false); dialog.showCancelButton(false);
+    var saveButton=WM2SettingsButton(dialog,"Save",resourcePath,"Wearables Manager - Save.png"),cancelButton=WM2SettingsButton(dialog,"Cancel",resourcePath,"Wearables Manager - Cancel.png");
+    dialog.addButton(saveButton,1);dialog.addButton(cancelButton,2);
+    dialog.setAcceptButton(saveButton);dialog.setRejectButton(cancelButton);
+    if(typeof dialog.setDefaultButton=="function")dialog.setDefaultButton(saveButton);
+    var metrics = WM2SettingsMetrics(dialog);
+    dialog.minWidth = 440; dialog.minHeight = 280;
+    // No fixed sizes, physical-DPI multiplier, or screen-height assumption.
+    var content = new DzWidget(dialog), layout = new DzVBoxLayout(content);
+    layout.margin = metrics.margin; layout.spacing = metrics.spacing;
+    dialog.addWidget(content, 1);
+    return {dialog:dialog,content:content,layout:layout,metrics:metrics,saveButton:saveButton,cancelButton:cancelButton};
+}
+function WM2SettingsRow(parent, layout) {
+    var row = new DzWidget(parent), rowLayout = new DzHBoxLayout(row);
+    rowLayout.margin = 0; rowLayout.spacing = WM2SettingsMetrics(row).spacing;
+    layout.addWidget(row); return {widget:row,layout:rowLayout};
+}
+function WM2SettingsIcons(resourcePath) {
+    var directory = new DzDir(resourcePath), entries = [], result = [];
+    try { entries = directory.entryList(["*.png","*.PNG"], DzDir.Files, DzDir.Name); }
+    finally { directory.deleteLater(); }
+    for (var i=0;i<entries.length;i++) {
+        var name=String(entries[i]);
+        if (/^[^\\/:\x00-\x1f]+\.png$/i.test(name) && result.indexOf(name)<0) result.push(name);
+    }
+    return result;
+}
+function WM2SettingsValidate(support, config) {
+    var result = support.validate(config);
+    return result && result.ok === true ? {ok:true,config:result.config || config} : {ok:false,message:result && result.message ? String(result.message) : "Settings did not pass validation."};
+}
+function WM2SettingsModel(support, resourcePath, firstIcon) {
+    var loaded;
+    try { loaded = support.load(resourcePath); }
+    catch (e) { loaded={config:support.defaults(),status:"read-error",message:String(e),rawToken:null}; }
+    var model={config:support.clone(loaded.config),rawToken:loaded.rawToken,status:String(loaded.status || "ok"),message:String(loaded.message || ""),active:-1,form:null,baseline:""};
+    model.editable = loaded.readOnly !== true && !/unsupported|future|read-error/i.test(model.status);
+    function response(ok,message) { return {ok:ok,message:String(message || "")}; }
+    model.clear = function () { model.active=-1;model.form={kind:"exactName",pattern:"",icon:firstIcon || ""};model.baseline=JSON.stringify(model.form); };
+    model.dirty = function () { return JSON.stringify(model.form)!==model.baseline; };
+    model.setForm = function (form) { model.form={kind:String(form.kind),pattern:String(form.pattern),icon:String(form.icon)}; };
+    model.commit = function (asNew) {
+        if (!model.editable) return response(false,"These settings are read-only: "+model.message);
+        var next=support.clone(model.config),index=!asNew&&model.active>=0?model.active:next.iconRules.length;
+        if (!model.form.pattern) return response(false,"Enter a rule pattern before adding or updating it.");
+        if (!model.form.icon) return response(false,"Choose an icon before adding or updating the rule.");
+        next.iconRules[index]=support.clone(model.form);
+        var checked=WM2SettingsValidate(support,next);if(!checked.ok)return checked;
+        model.config=support.clone(checked.config);model.active=index;model.baseline=JSON.stringify(model.form);return {ok:true,index:index};
+    };
+    model.select = function (index) {
+        if (model.dirty()) { var committed=model.commit(false);if(!committed.ok)return committed; }
+        if(index<0||index>=model.config.iconRules.length){model.clear();return response(true);}
+        model.active=index;model.form=support.clone(model.config.iconRules[index]);model.baseline=JSON.stringify(model.form);return response(true);
+    };
+    model.remove = function () {
+        if(!model.editable)return response(false,"These settings are read-only.");
+        if(model.active<0)return response(false,"Select a rule to remove.");
+        model.config.iconRules.splice(model.active,1);model.clear();return response(true);
+    };
+    model.move = function (direction) {
+        if(!model.editable)return response(false,"These settings are read-only.");
+        if(model.active<0)return response(false,"Select a rule to move.");
+        if(model.dirty()){var committed=model.commit(false);if(!committed.ok)return committed;}
+        var index=model.active,target=index+direction;
+        if(target<0||target>=model.config.iconRules.length)return response(false,"The rule is already at the end of the list.");
+        var item=model.config.iconRules[index];model.config.iconRules[index]=model.config.iconRules[target];model.config.iconRules[target]=item;model.active=target;
+        return response(true);
+    };
+    model.save = function () {
+        if(!model.editable)return response(false,"These settings are read-only: "+model.message);
+        if(model.dirty()){var committed=model.commit(false);if(!committed.ok)return committed;}
+        var checked=WM2SettingsValidate(support,model.config);if(!checked.ok)return checked;
+        var saved=support.save(resourcePath,checked.config,model.rawToken);
+        if(!saved||saved.ok!==true)return response(false,saved&&saved.message?saved.message:"Settings could not be saved.");
+        model.config=support.clone(saved.config || checked.config);model.rawToken=saved.rawToken;return {ok:true,config:model.config,message:String(saved.message || "")};
+    };
+    model.clear();return model;
+}
+function WM2SettingsPreviewText(result) {
+    var lines=["Matched "+result.matched+" of "+result.scanned+" scanned scene items"+(result.truncated?" (limited to "+result.limit+" of "+result.total+")":"")+"."];
+    for(var i=0;i<result.rows.length;i++){
+        var row=result.rows[i],match=row.match;
+        lines.push(row.name+" | "+row.label+" -> "+(match&&match.matched?match.icon+" (rule "+(match.ruleIndex+1)+")":"original icon"));
+    }
+    return lines.join("\n");
+}
+function WM2ShowIconRules(resourcePath) {
+    var support=WM2Support,icons=[],iconError="";
+    try { icons=WM2SettingsIcons(resourcePath); } catch(e) { iconError="Icon listing failed: "+String(e); }
+    var model=WM2SettingsModel(support,resourcePath,icons.length?icons[0]:""),ui=WM2SettingsDialog("Wearables Manager - Icon Rules",resourcePath),dialog=ui.dialog,content=ui.content,layout=ui.layout,metrics=ui.metrics;
+    layout.addWidget(WM2SettingsHeading(content,"Icon Rules","#87c9ff"));
+    layout.addWidget(WM2SettingsPlainLabel(content,"Choose a rule to edit. Add/Update commits the form; Save also commits a changed form. Exact internal name wins before exact label; then longer prefixes win. Equal-length prefixes prefer label over name; the earlier row breaks the final tie. Only exact-label rules ignore a final ' (digits)' copy suffix."));
+    var status=WM2SettingsPlainLabel(content,""),list=new DzListBox(content);list.selectionMode=DzListBox.Single;list.minHeight=metrics.listHeight;layout.addWidget(list,1);
+    var kindRow=WM2SettingsRow(content,layout),kind=new DzComboBox(kindRow.widget),kinds=["exactName","exactLabel","labelPrefix","namePrefix"];
+    kindRow.layout.addWidget(WM2SettingsPlainLabel(kindRow.widget,"Match"));for(var i=0;i<kinds.length;i++)kind.addItem(kinds[i]);kind.minHeight=metrics.fieldHeight;kindRow.layout.addWidget(kind,1);
+    var patternRow=WM2SettingsRow(content,layout),pattern=new DzLineEdit(patternRow.widget);pattern.minHeight=metrics.fieldHeight;patternRow.layout.addWidget(WM2SettingsPlainLabel(patternRow.widget,"Pattern"));patternRow.layout.addWidget(pattern,1);
+    var iconRow=WM2SettingsRow(content,layout),icon=new DzComboBox(iconRow.widget),iconValues=icons.slice(0);icon.minHeight=metrics.fieldHeight;iconRow.layout.addWidget(WM2SettingsPlainLabel(iconRow.widget,"Icon"));iconRow.layout.addWidget(icon,1);
+    for(var j=0;j<icons.length;j++)icon.addItem(icons[j]);
+    var actions=WM2SettingsRow(content,layout),selectionActions=WM2SettingsRow(content,layout),moving=WM2SettingsRow(content,layout),populating=false;
+    var add=WM2SettingsButton(actions.widget,"Add",resourcePath,"Wearables Manager - Prop.png"),update=WM2SettingsButton(actions.widget,"Update",resourcePath,"Wearables Manager - Ok.png"),remove=WM2SettingsButton(actions.widget,"Remove",resourcePath,"Wearables Manager - Cancel.png");
+    actions.layout.addWidget(add);actions.layout.addWidget(update);actions.layout.addWidget(remove);
+    var useName=WM2SettingsButton(selectionActions.widget,"Use Selected Name",resourcePath,"Wearables Manager - Prop.png"),useLabel=WM2SettingsButton(selectionActions.widget,"Use Selected Label",resourcePath,"Wearables Manager - Prop.png");selectionActions.layout.addWidget(useName);selectionActions.layout.addWidget(useLabel);
+    var up=WM2SettingsButton(moving.widget,"Move Up",resourcePath,"Wearables Manager - Arrow Left.png"),down=WM2SettingsButton(moving.widget,"Move Down",resourcePath,"Wearables Manager - Arrow Right.png"),previewButton=WM2SettingsButton(moving.widget,"Preview Scene",resourcePath,"Wearables Manager - Group.png");moving.layout.addWidget(up);moving.layout.addWidget(down);moving.layout.addWidget(previewButton);
+    layout.addWidget(WM2SettingsPlainLabel(content,"Preview Scene shows which rule wins for up to 2,000 scene items. Missing or unreadable configured PNGs use the automatic icon."));
+    var preview=new DzTextEdit(content);preview.readOnly=true;preview.acceptRichText=false;preview.plainText="No nodes are changed and preview does not save settings.";preview.minHeight=metrics.previewHeight;layout.addWidget(preview,1);layout.addWidget(status);
+    function say(text){status.text=String(text);}
+    function capture(){if(!populating)model.setForm({kind:kinds[kind.currentItem]||"exactName",pattern:String(pattern.text),icon:iconValues[icon.currentItem]||""});}
+    function populate(){populating=true;try{
+        list.clear();for(var n=0;n<model.config.iconRules.length;n++){var rule=model.config.iconRules[n];list.insertItem((n+1)+". "+rule.kind+" | "+rule.pattern+" -> "+rule.icon);}
+        for(var selected=0;selected<model.config.iconRules.length;selected++)list.setSelected(selected,false);
+        list.currentItem=model.active;
+        if(model.active>=0)list.setSelected(model.active,true);
+        kind.currentItem=kinds.indexOf(model.form.kind);pattern.text=model.form.pattern;
+        var index=iconValues.indexOf(model.form.icon);if(index<0&&model.form.icon){iconValues.push(model.form.icon);icon.addItem(model.form.icon+" [missing]");index=iconValues.length-1;}icon.currentItem=index;
+        update.enabled=model.editable&&model.active>=0;remove.enabled=update.enabled;up.enabled=update.enabled&&model.active>0;down.enabled=update.enabled&&model.active<model.config.iconRules.length-1;
+    }finally{populating=false;}}
+    function perform(fn,clear){capture();try{var result=fn();if(!result.ok){say(result.message);return;}if(clear)model.clear();populate();say("Changes are ready to save.");}catch(e){say(String(e));}}
+    connect(kind,"currentIndexChanged(int)",capture);connect(pattern,"textChanged(const QString&)",capture);connect(icon,"currentIndexChanged(int)",capture);
+    connect(list,"selectionChanged(int)",function(index){if(populating)return;capture();var result=model.select(Number(index));if(!result.ok){populating=true;try{for(var n=0;n<model.config.iconRules.length;n++)list.setSelected(n,false);list.currentItem=model.active;if(model.active>=0)list.setSelected(model.active,true);}finally{populating=false;}say(result.message);return;}populate();});
+    connect(add,"clicked()",function(){perform(function(){return model.commit(true);},true);});connect(update,"clicked()",function(){perform(function(){return model.active<0?{ok:false,message:"Select a rule to update."}:model.commit(false);},true);});connect(remove,"clicked()",function(){perform(model.remove,false);});
+    connect(up,"clicked()",function(){perform(function(){return model.move(-1);},false);});connect(down,"clicked()",function(){perform(function(){return model.move(1);},false);});
+    function useSelected(label){try{var node=Scene.getPrimarySelection();if(!node){say("Select a scene item first.");return;}capture();model.setForm({kind:label?"exactLabel":"exactName",pattern:label?String(node.getLabel()):String(node.name),icon:model.form.icon});populate();say("Selected value copied to the form. Add/Update or Save commits it.");}catch(e){say(String(e));}}
+    connect(useName,"clicked()",function(){useSelected(false);});connect(useLabel,"clicked()",function(){useSelected(true);});
+    connect(previewButton,"clicked()",function(){capture();try{var rules=support.clone(model.config.iconRules);if(model.dirty()){var next=support.clone(model.config),index=model.active>=0?model.active:next.iconRules.length;next.iconRules[index]=support.clone(model.form);var checked=WM2SettingsValidate(support,next);if(!checked.ok){say(checked.message);return;}rules=checked.config.iconRules;}preview.plainText=WM2SettingsPreviewText(support.previewIconRules(rules,Scene.getNodeList(),2000));}catch(e){say(String(e));}});
+    kind.enabled=model.editable;pattern.enabled=model.editable;icon.enabled=model.editable;add.enabled=model.editable;useName.enabled=model.editable;useLabel.enabled=model.editable;dialog.setAcceptButtonEnabled(model.editable);ui.saveButton.enabled=model.editable;
+    populate();say((model.message||("Settings: "+model.status+"."))+(iconError?" "+iconError:""));
+    try { while(dialog.exec()){capture();try{var saved=model.save();if(saved.ok)return {saved:true,config:support.clone(model.config),message:saved.message};say(saved.message);populate();}catch(e){say(String(e));}}return {saved:false}; }
+    finally { dialog.deleteLater(); }
+}
+function WM2SettingsResetGenesis(support, config) {
+    var next=support.clone(config),defaults=support.defaults().supportedFigures;
+    for(var i=0;i<defaults.length;i++)if(next.supportedFigures.indexOf(defaults[i])<0)next.supportedFigures.push(defaults[i]);
+    return next;
+}
+function WM2ShowSupportedFigures(resourcePath) {
+    var support=WM2Support,model=WM2SettingsModel(support,resourcePath,""),ui=WM2SettingsDialog("Wearables Manager - Supported Figures",resourcePath),dialog=ui.dialog,content=ui.content,layout=ui.layout,metrics=ui.metrics;
+    layout.addWidget(WM2SettingsHeading(content,"Supported Figures","#FA8072"));
+    layout.addWidget(WM2SettingsPlainLabel(content,"The registry uses exact internal figure names, not labels. Select an independent figure or one of its bones, then Add Selected Figure. Changes apply on the next Wearables Manager run; open transfer dialogs keep their current figure choices."));
+    var defaults=support.defaults().supportedFigures,list=new DzListBox(content),status=WM2SettingsPlainLabel(content,"");list.selectionMode=DzListBox.Single;list.minHeight=metrics.listHeight;layout.addWidget(list,1);
+    var actions=WM2SettingsRow(content,layout),add=WM2SettingsButton(actions.widget,"Add Selected Figure",resourcePath,"Wearables Manager - Prop.png"),remove=WM2SettingsButton(actions.widget,"Remove",resourcePath,"Wearables Manager - Cancel.png"),reset=WM2SettingsButton(actions.widget,"Reset Genesis Defaults",resourcePath,"Wearables Manager - Group.png");actions.layout.addWidget(add);actions.layout.addWidget(remove);actions.layout.addWidget(reset);layout.addWidget(status);
+    function say(text){status.text=String(text);}
+    function populate(){list.clear();for(var i=0;i<model.config.supportedFigures.length;i++){var name=model.config.supportedFigures[i];list.insertItem(name+(defaults.indexOf(name)>=0?" [Genesis default]":" [custom internal name]"));list.setSelected(i,false);}list.currentItem=-1;remove.enabled=false;}
+    connect(list,"selectionChanged(int)",function(index){remove.enabled=model.editable&&Number(index)>=0&&Number(index)<model.config.supportedFigures.length;});
+    connect(add,"clicked()",function(){try{var result=support.addSupportedFigure(model.config,Scene.getPrimarySelection());if(!result.ok){say(result.message);return;}model.config=support.clone(result.config);populate();say("Ready to save: "+String(result.figure.name)+" ("+String(result.figure.className())+"). Changes apply on the next run.");}catch(e){say(String(e));}});
+    connect(remove,"clicked()",function(){var index=Number(list.currentItem);if(index<0||index>=model.config.supportedFigures.length){say("Select a registry entry to remove.");return;}var removed=model.config.supportedFigures[index];model.config.supportedFigures.splice(index,1);populate();say("Removed "+removed+" from this draft. Save to apply on the next run.");});
+    connect(reset,"clicked()",function(){model.config=WM2SettingsResetGenesis(support,model.config);populate();say("Genesis defaults restored; custom entries kept. Save to apply on the next run.");});
+    add.enabled=model.editable;reset.enabled=model.editable;dialog.setAcceptButtonEnabled(model.editable);ui.saveButton.enabled=model.editable;populate();say(model.message||("Settings: "+model.status+"."));
+    try { while(dialog.exec()){try{var saved=model.save();if(saved.ok)return {saved:true,config:support.clone(model.config),message:saved.message};say(saved.message);}catch(e){say(String(e));}}return {saved:false}; }
+    finally { dialog.deleteLater(); }
+}

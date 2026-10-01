@@ -44,6 +44,7 @@ function createWorld(source) {
     inherits(t) { return t === 'DzNode' || this.type === t || (t === 'DzSkeleton' && this.type === 'DzFigure'); }
     className() { return this.type; }
     getNodeParent() { return this.parent; }
+    getFollowTarget() { return this.follow || null; }
     getNodeChildren(recursive) { return recursive ? this.children.flatMap(c=>[c,...c.getNodeChildren(true)]) : this.children.slice(); }
     getLabel() { return this.label; }
     setName(n) { this.name = this.objectName = n; }
@@ -72,6 +73,7 @@ function createWorld(source) {
     MessageBox:{critical:m=>state.errors.push(m)}, bAltPressed:false
   };
   vm.createContext(sandbox);
+  require("../support/config.cjs").install(sandbox,sourceRoot);
   const originalNames = ['GenerateUniqueID','BindHumanFigureToGroup','FindBoundGroup','FindBoundFigure','GetCurrentHumanFigure',
     'IsNodeHumanFigure','FilterParentedToHumanFigureAndNotAnExemption','IsParentedToHuman','SaveCollisionItem','RestoreCollisionItem','ReturnWearable','ParentToBoneGroup','err'];
   originalNames.forEach(n=>vm.runInContext(extract(source,n),sandbox));

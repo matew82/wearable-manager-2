@@ -11,3 +11,7 @@ Desktop.ini
 node_modules/
 .test-output/
 .native-test-output/
+
+# Local WM2 preferences and retained settings backups
+/Resources/WM2 Settings.json
+/Resources/WM2 Settings.json.wm2-*

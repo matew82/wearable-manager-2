@@ -22,6 +22,7 @@ function setup(source){
     for(const key of ['elementID','name','objectName','label'])Object.defineProperty(a,key,{get:()=>n[key],set:v=>{n[key]=v;}});
     for(const method of ['inherits','className','getLabel','findDataItem','addDataItem','setName','setLabel','setVisible'])a[method]=function(...v){return n[method](...v);};
     a.getNodeParent=()=>alias(n.getNodeParent());
+    a.getFollowTarget=()=>alias(n.getFollowTarget());
     a.getNodeChildren=r=>n.getNodeChildren(r).map(alias);
     a.findNodeChild=(name,recurse)=>alias(n.findNodeChild(name,recurse));
     a.addNodeChild=child=>n.addNodeChild(unwrap(child));

@@ -42,6 +42,7 @@ function world(source) {
   };
   c.DzFile.ReadOnly=1;
   vm.createContext(c);
+  require("./support/config.cjs").install(c,root);
   const names=['RemoveQueueClass','GenerateUniqueID','GenerateUniqueGroupFileName','AddStringDataToNode','AddStringDataToNodeEx','GetSerializedUVs','GetHumanFigureMaterialsNames','GetExtraMaterialsArray','GetDefaultTransferExemptionsList','IsNodeHumanFigure','FilterParentedToHumanFigureAndNotAnExemption','IsParentedToHuman','FilterShells','FilterSkeletons','FilterMarkedForTransferring','GetBelongingsGroup','FindBoundGroup','FindBoundFigure','BindHumanFigureToGroup','ParentToBoneGroup','SaveCollisionItem','PlaceWearableIntoGroup','RestoreCollisionItem','RestoreNodeFollowTarget','ReturnWearable','ReturnAllWearableToTheFigure','GetAllShells','SaveShellMaterialsInFile','RestoreMaterialsFromFile','err','CheckForAnotherProcessActive'];
   for(const match of source.matchAll(/^\s*function (WM2\w+)\(/gm))if(!names.includes(match[1]))names.push(match[1]);
   for(const n of names){try{vm.runInContext(getFunction(source,n).text,c);}catch(e){if(!String(e).includes('Missing function '))throw e;}}
