@@ -1,29 +1,40 @@
-// Run: node Tests/run.cjs (Node.js 20+ and Git; no DAZ instance is launched).
-const fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process'),vm=require('node:vm');
+const baselineHashes={"Wearables Manager Full.dsa":"e848612c0206f35e2cc8db36f769f949dab10784725218d38a63032a44c5a6ec","Wearables Manager Menu.dsa":"adb38dfe1ebeff2db4e3b25c376143c4d9cce9bb5348bb62c30065ba206fca6f","Wearables Manager Put On.dsa":"fc176fb20120fe1db01fe04dca1f3c9102a81e8689dc8d3b40a92ffc348a04b9","Wearables Manager Take Off.dsa":"c56ce119cec097433cfd7a2858888dd9896e831138e72a4f20851a7fb99c25d2","Wearables Manager User Guide.dsa":"a12d6953d95ae8261135f2f98c0fc0caca2fef597db49c06ae2d3dd7c004a82d"};
+// Run: node Tests/run.cjs [--baseline-root <verified original scripts>] (Node.js 20+; no DAZ instance is launched).
+const fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process'),vm=require('node:vm'),crypto=require('node:crypto');
 const root=path.resolve(__dirname,'..'),output=path.join(root,'.test-output'),baseline=path.join(output,'baseline');
+const args=process.argv.slice(2);
+if(args.length && (args.length!==2 || args[0]!=='--baseline-root'))throw Error('Usage: node Tests/run.cjs [--baseline-root <verified original scripts>]');
+const baselineRoot=args.length?path.resolve(args[1]):null;
 fs.mkdirSync(baseline,{recursive:true});
 const engines=require('./support/extract.cjs').files;
 const files=[...engines,'Wearables Manager User Guide.dsa'];
 let git='git';
-if(cp.spawnSync(git,['--version'],{encoding:'utf8',windowsHide:true}).status!==0){git='C:\Program Files\Git\cmd\git.exe';}
+if(!baselineRoot && cp.spawnSync(git,['--version'],{encoding:'utf8',windowsHide:true}).status!==0){git='C:\Program Files\Git\cmd\git.exe';}
 const baselineCommit='1d15974476ccecaa30f8fe690a9bee6e991194bc';
 for(const file of files){
-  const r=cp.spawnSync(git,['show',baselineCommit+':'+file],{cwd:root,windowsHide:true,maxBuffer:4*1024*1024});
-  if(r.status!==0)throw new Error('Cannot read baseline '+file+': '+r.stderr);
-  fs.writeFileSync(path.join(baseline,file),r.stdout);
+  let bytes;
+  if(baselineRoot)bytes=fs.readFileSync(path.join(baselineRoot,file));
+  else{
+   const r=cp.spawnSync(git,['show',baselineCommit+':'+file],{cwd:root,windowsHide:true,maxBuffer:4*1024*1024});
+   if(r.status!==0)throw new Error('Cannot read baseline '+file+': '+r.stderr);
+   bytes=r.stdout;
+  }
+  if(crypto.createHash('sha256').update(bytes).digest('hex')!==baselineHashes[file])throw Error('Baseline hash mismatch: '+file);
+  fs.writeFileSync(path.join(baseline,file),bytes);
   new vm.Script(fs.readFileSync(path.join(root,file),'utf8'),{filename:file});
 }
 const suites=[
  ['integration.cjs','--source-root',root],
  ['storage/regressions.cjs','--sourceRoot',root,'--expect','after'],
  ['graph/regressions.cjs','--source-root',root,'--mode','source','--output',path.join(output,'graph-results.json')],
+ ['graph/registration.cjs','--source-root',root,'--output',path.join(output,'registration-results.json')],
  ['graph/ownership.cjs','--source-root',root,'--mode','source','--output',path.join(output,'ownership-results.json')],
  ['graph/aliases.cjs','--source-root',root,'--output',path.join(output,'alias-results.json')],
  ['storage/aliases.cjs','--sourceRoot',root,'--expect','after'],
  ['controls/regressions.cjs','--source-root',root],
  ['help/regressions.cjs',path.join(root,'Wearables Manager User Guide.dsa')]
 ];
-const receipt={baselineCommit,sourceRoot:root,nativeDAZ:false,syntaxFiles:files,suites:[]};
+const receipt={baselineCommit,baselineRoot,baselineHashesVerified:true,sourceRoot:root,nativeDAZ:false,syntaxFiles:files,suites:[]};
 for(const [name,...args] of suites){
  const r=cp.spawnSync(process.execPath,[path.join(__dirname,name),...args],{cwd:root,encoding:'utf8',windowsHide:true,maxBuffer:4*1024*1024});
  const outputStem=name.replace(/[/\\]/g,'-').replace(/\.cjs$/,'');

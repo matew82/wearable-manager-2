@@ -55,7 +55,7 @@ function createWorld(source) {
     addNodeChild(child) {
       if (child.parent) child.parent.children = child.parent.children.filter(c=>c!==child);
       child.parent=this; this.children.push(child);
-      if (state.nodes.includes(this) && !state.nodes.includes(child)) state.nodes.push(child);
+      // Parenting does not register a newly constructed node with Scene.
     }
   }
   Node.next=1;
@@ -64,6 +64,7 @@ function createWorld(source) {
     DATA_ITEM_NAME:'MatewWearables', SETTINGS_ID:'ID', SETTINGS_COLLISION_ITEM:'Collision_Item', SETTINGS_TARGET:'Target',
     ARR_HUMAN_FIGURES_NAMES:JSON.parse(/var ARR_HUMAN_FIGURES_NAMES = (\[[^;]+\]);/.exec(source)[1]),
     Scene:{getNodeList:()=>state.nodes,findNodeByLabel:l=>state.nodes.find(n=>n.label===l),
+      addNode:n=>{if(state.nodes.includes(n))return false;state.nodes.push(n);return true;},
       removeNode:n=>{state.nodes=state.nodes.filter(x=>x!==n&&!n.getNodeChildren(true).includes(x));if(n.parent)n.parent.children=n.parent.children.filter(x=>x!==n);n.parent=null;}},
     oRemoveQueue:{AddDataToQueue:(...a)=>state.queued.push(a)},
     DzSceneHelper:()=>({findPropertyByInternalName:(name,node)=>node.collision}),

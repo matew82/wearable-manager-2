@@ -2831,7 +2831,15 @@
 	        if (oGroup.findNodeChild(sName, false)) sName += "_" + GenerateUniqueID(10);
 	        oBoneGroup.setName(sName);
 	        oBoneGroup.setLabel(oGroup.getLabel() + "_" + oBone.getLabel());
+	        Scene.addNode(oBoneGroup);
+	        if (!WM2SceneContains(oBoneGroup)) {
+	            throw new Error("The new bone storage group could not be added to the scene.");
+	        }
 	        oGroup.addNodeChild(oBoneGroup);
+	        if (!WM2SameNode(oBoneGroup.getNodeParent(), oGroup)) {
+	            if (oBoneGroup.getNodeChildren(false).length === 0) Scene.removeNode(oBoneGroup);
+	            throw new Error("The new bone storage group could not be attached to its storage owner.");
+	        }
 	        var oMarked = WM2MarkBoneProxy(oBoneGroup, oHumanFigure, oBone);
 	        if (!oMarked.ok) {
 	            if (oBoneGroup.getNodeChildren(false).length === 0) Scene.removeNode(oBoneGroup);
