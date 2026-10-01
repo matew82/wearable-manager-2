@@ -32,7 +32,8 @@ var WM2Support = (function () {
     function keysExactly(value, allowed) {
         var key;
         for (key in value) {
-            if (!own.call(value, key) || !own.call(allowed, key)) return false;
+            if (!own.call(value, key)) continue;
+            if (!own.call(allowed, key)) return false;
         }
         for (key in allowed) if (own.call(allowed, key) && !own.call(value, key)) return false;
         return true;
@@ -67,7 +68,9 @@ var WM2Support = (function () {
             for (var i = 0; i < value.length; i++) result.push(cloneValue(value[i], next, depth + 1));
         } else {
             for (key in value) {
-                if (!own.call(value, key) || key === "__proto__" || key === "constructor" || key === "prototype") throw new Error("Settings clone has an unsupported key.");
+                // Inherited host members are not JSON settings data.
+                if (!own.call(value, key)) continue;
+                if (key === "__proto__" || key === "constructor" || key === "prototype") throw new Error("Settings clone has an unsupported own key: " + key + ".");
                 result[key] = cloneValue(value[key], next, depth + 1);
             }
         }
