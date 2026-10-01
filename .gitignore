@@ -1,0 +1,13 @@
+# Local editor and operating system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Temporary work and isolated test output
+*.tmp
+*.log
+node_modules/
+.test-output/
+.native-test-output/

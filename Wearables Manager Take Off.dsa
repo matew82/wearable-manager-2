@@ -1,0 +1,1063 @@
+// DAZ Studio version 4.9.0.0 filetype DAZ Script
+
+/* Wearables Take Off
+
+ Product: matew's Wearables
+
+ Author: matew
+
+ Date: 4-17-2024
+
+ */
+
+(function () {
+	/*-----------------------------------------------------------------*\
+							   DECLARATIONS
+	\*-----------------------------------------------------------------*/
+
+	var PATH_TEMP = App.getTempPath() + "/matew/";
+
+	var DATA_ITEM_NAME = "MatewWearables";
+	var SETTINGS_FILE_NAME = "FileName";
+	var SETTINGS_ID = "ID";
+	var SETTINGS_UVS = "UV";
+	var SETTINGS_TARGET = "Target";
+	var SETTINGS_COLLISION_ITEM = "Collision_Item";
+	var SETTIGNS_TRANSFER = "Transfer";
+	var VALUE_TRANSFER_YES = "Yes";
+	var VALUE_TRANSFER_NO = "No";
+
+	var ARRAY_SEPARATOR = ",,";
+	var ARR_HUMAN_FIGURES_NAMES = ["Genesis", "Genesis2Female", "Genesis2Male", "Genesis3Female", "Genesis3Male", "Genesis8Female", "Genesis8Male", "Genesis8_1Female", "Genesis8_1Male", "Genesis9", "Genesis9_1", "Genesis10", "Genesis10Female", "Genesis10Male"];
+
+	var bReturnBelongings = false;
+	var bUseTransferMark = true;
+	var bTransferByDefault = true;
+
+
+
+	var oNode, oHumanFigure;
+
+
+	/*-----------------------------------------------------------------*\
+					DATA SETTINGS REMOVE QUEUE CLASS
+	\*-----------------------------------------------------------------*/
+	function RemoveQueueClass() {
+		function DataSettingRemoveQueueItem(oDataItem, oSettings, oKey) {
+			this.oDataItem = oDataItem;
+			this.oSettings = oSettings;
+			this.oKey = oKey;
+		}
+
+		this.arrDataSettingsItems = [];
+		this.arrFiles = [];
+
+		this.AddDataToQueue = function (oDataItem, oSettings, oKey) {
+			this.arrDataSettingsItems.push(new DataSettingRemoveQueueItem(oDataItem, oSettings, oKey));
+		}
+
+		this.AddFileToQueue = function (fFile) {
+			this.arrFiles.push(fFile);
+		}
+
+		this.Finalize = function () {
+			var n = this.arrDataSettingsItems.length;
+			for (var i = 0; i < n; i++) {
+				var cItem = this.arrDataSettingsItems[i];
+				var oSettings = cItem.oSettings;
+				oSettings.removeValue(cItem.oKey);
+				if (oSettings.getNumValues() == 0) {
+					var oData = cItem.oDataItem;
+					var oNode = oData.getOwner();
+					if (oNode) oNode.removeDataItem(oData);
+				}
+			}
+
+			var n = this.arrFiles.length;
+			for (var i = 0; i < n; i++) {
+				var fFile = this.arrFiles[i];
+				fFile.remove();
+				fFile.deleteLater();
+			}
+
+
+			this.Clear();
+		}
+
+		this.Clear = function () {
+			this.arrDataSettingsItems = [];
+			this.arrFiles = [];
+		}
+	}
+	var oRemoveQueue = new RemoveQueueClass();
+
+
+	/*-----------------------------------------------------------------*\
+							   MAIN BLOCK
+	\*-----------------------------------------------------------------*/
+	if (!CheckForAnotherProcessActive()) return;
+	if (!(oNode = Scene.getPrimarySelection())) return err("Please, select a human figure to proceed.");
+	if (!(oHumanFigure = GetCurrentHumanFigure(oNode))) return err("No human figure selected."); //get genesis figure
+	var oAnotherFigure = GetAnotherHumanFigureParentedToTheCurrent(oHumanFigure);
+	if (oAnotherFigure) return err("Human figure '" + oAnotherFigure.getLabel() + "' is parented to " + oHumanFigure.getLabel() + ". This could potentially cause problems. Please unparent it before continuing.");
+
+	SetStatusBusy();
+
+	if (bReturnBelongings) {
+		/*
+		<------------ Return wearables to the figure ------------->
+		*/
+		ReturnAllWearableToTheFigure(oHumanFigure);
+	} else {
+		/*
+		<------------ Move wearables into group ------------->
+		*/
+		beginUndo();
+		var oGroup = GetBelongingsGroup(oHumanFigure, true);
+		var arrChildren = oHumanFigure.getNodeChildren(true);
+		var arrShells = arrChildren.filter(FilterShells); // get array with all geoshells
+		//get an array of nodes parented to the human figure and not to another figure and where no transfer exemptions (like eyelashes)
+		//also, it filters out marked for not transferring wearables
+		arrChildren = arrChildren.filter(FilterParentedToHumanFigureAndNotAnExemption, GetDefaultTransferExemptionsList(oHumanFigure));
+		if (bUseTransferMark) arrChildren = arrChildren.filter(FilterMarkedForTransferring);
+
+
+		//save materials for Shells
+		for (var i = 0; i < arrShells.length; i++) SaveShellMaterialsInFile(oHumanFigure, arrShells[i]);
+		print("here-exit");
+
+		//place wearables into groups
+		for (var i = 0; i < arrChildren.length; i++) PlaceWearableIntoGroup(oHumanFigure, arrChildren[i], oGroup);
+
+		acceptUndo("matew's Wearables - Return Belongings");
+	}
+
+	SetStatusFinished();
+
+	/*-----------------------------------------------------------------*\
+								   FUNCTIONS
+	\*-----------------------------------------------------------------*/
+
+	//Function creatres and checks global variable g_matewWearablesStatus
+	//It doesn't allow to launch several matew's wearables scripts together - it could lead to losing data
+	function CheckForAnotherProcessActive() {
+		if (typeof g_matewWearablesStatus == 'undefined') {
+			g_matewWearablesStatus = 0;
+			return true;
+		}
+
+		if (g_matewWearablesStatus <= 0) {
+			return true; // no backgroups process
+		} else if (g_matewWearablesStatus == 1) {
+			err("Please, let the previous matew's Wearables script finish before continuing.");
+			g_matewWearablesStatus++;
+			return false
+		} else {
+			// it's not the first time. It may happen that another scipt was finished with error and didn't reset the status variable
+			// let user fix the issue
+			var sMessage = "It looks like the previous matew's Wearables script hasn't finished yet. Launching multiple scripts simultaneously may lead to data loss.";
+			if (MessageBox.warning(sMessage, "matew's Wearables", "&Okay", "&It's a mistake. Let me continue.") == 0) {
+				return false;
+			} else {
+				g_matewWearablesStatus = 0;
+				return true;
+			}
+		}
+		return true;
+	}
+
+	function SetStatusFinished() {
+		g_matewWearablesStatus = 0;
+	}
+
+	function SetStatusBusy() {
+		g_matewWearablesStatus += 1;
+	}
+
+
+	function ReturnAllWearableToTheFigure(oHumanFigure) {
+		var oGroup = GetBelongingsGroup(oHumanFigure, false);
+		if (!oGroup) return;
+
+
+		beginUndo();
+		var arrGroupTopChildren = oGroup.getNodeChildren(false);
+		var arrGroupAllChildren = oGroup.getNodeChildren(true);
+		var arrSkeletons = oGroup.getNodeChildren(true).filter(FilterSkeletons);
+		var arrShells = GetAllShells(oHumanFigure, oGroup, false);
+
+		//restore follow targets
+		for (var i = 0; i < arrSkeletons.length; i++) RestoreNodeFollowTarget(arrSkeletons[i], oHumanFigure);
+
+		processEvents();
+
+		//restore shells materials
+		for (var i = 0; i < arrShells.length; i++) {
+			if (!RestoreMaterialsFromFile(arrShells[i])) {
+				oRemoveQueue.Clear();
+				cancelUndo();
+				return;
+			}
+		}
+
+		//return wearables to the human figure
+		for (var i = 0; i < arrGroupTopChildren.length; i++) ReturnWearable(oHumanFigure, arrGroupTopChildren[i], oGroup);
+
+		//restore collision items
+        for (var i = 0; i < arrGroupAllChildren.length; i++) {
+            var oWearable = arrGroupAllChildren[i];
+            RestoreCollisionItem(oWearable);
+        }
+
+		oRemoveQueue.Finalize();
+
+		Scene.removeNode(oGroup);
+		acceptUndo("matew's Wearables - Return Belongings");
+	}
+
+
+	function GetAllShells(oHumanFigure, oGroup, bFilterNotMoved) {
+		var arrHumanNodes = oHumanFigure.getNodeChildren(true);
+		var arrGroupNodes = [];
+		if (oGroup) arrGroupNodes = oGroup.getNodeChildren(true);
+
+
+		if (arrGroupNodes && arrGroupNodes.length > 0) {
+			var arrShells = arrHumanNodes.concat(arrGroupNodes);
+		} else {
+			var arrShells = arrHumanNodes;
+		}
+		return arrShells.filter(FilterShells);
+	}
+
+	function PlaceWearableIntoGroup(oHumanFigure, oWearable, oGroup) {
+		//Unfit from the human figure
+		if (oWearable.inherits("DzSkeleton")) {
+			var oTarget = oWearable.getFollowTarget();
+			if (oTarget) {
+				AddStringDataToNode(oWearable, DATA_ITEM_NAME, SETTINGS_TARGET, oTarget.name);
+                SaveCollisionItem(oHumanFigure, oWearable);
+				oWearable.setFollowTarget(null);
+			}
+		}
+
+		//unparent fron the human figure
+		var oParent = oWearable.getNodeParent();
+		if (oParent.name != oHumanFigure.name) {
+			//parented to one of the bones - need to create additional gruop for the bone
+			ParentToBoneGroup(oParent, oWearable);
+		} else {
+			//parented to the root of the human figure
+			oGroup.addNodeChild(oWearable);
+		}
+	}
+
+	function SaveCollisionItem(oHumanFigure, oWearable) {
+		var oHelper = DzSceneHelper();
+		var oCollisionNode = null;
+		var oCollisionProp = oHelper.findPropertyByInternalName("Collision Item", oWearable);
+		if (oCollisionProp) oCollisionNode = oCollisionProp.getValue();
+		if (!oCollisionNode) return;
+        if (oCollisionNode == oHumanFigure) return; //no need to save the human figure as a collision item
+
+		var oData = oWearable.findDataItem(DATA_ITEM_NAME);
+        if (!oData) {
+            oData = new DzSimpleElementData(DATA_ITEM_NAME, true);
+            oWearable.addDataItem(oData);
+		}
+
+		var oDataSettings = oData.getSettings();
+		if (!oDataSettings) return
+
+		oDataSettings.setStringValue(SETTINGS_COLLISION_ITEM, oCollisionNode.getLabel());
+	}
+
+    function RestoreCollisionItem(oWearable) {
+        var oData = oWearable.findDataItem(DATA_ITEM_NAME);
+        if (!oData) return;
+        var oSettings = oData.getSettings();
+        var sCollisionItem = oSettings.getStringValue(SETTINGS_COLLISION_ITEM, "");
+        if (!sCollisionItem) return;
+        oRemoveQueue.AddDataToQueue(oData, oSettings, SETTINGS_COLLISION_ITEM);
+        //oSettings.removeValue(SETTINGS_COLLISION_ITEM);
+		var oCollisionNode = Scene.findNodeByLabel(sCollisionItem, true);
+        if (!oCollisionNode) return;
+        var oHelper = DzSceneHelper();
+        var oCollisionProp = oHelper.findPropertyByInternalName("Collision Item", oWearable);
+        if (oCollisionProp) {
+            oCollisionProp.setValue(oCollisionNode);
+            return;
+        }
+        err("Unable to restore collision item for " + oWearable.name + ". Please, manually set the collision item in the parameters tab.");
+    }
+
+	function ReturnWearable(oHumanFigure, oWearable, oGroup) {
+		if (oWearable.inherits("DzGroupNode")) {
+			var sgName = oWearable.name;
+			if (sgName.startsWith(oGroup.name + "_")) {
+				//bone group - need to parent its children to the bone
+				var obgChildren = oWearable.getNodeChildren(false);
+				if (!obgChildren) return;
+
+				var sBoneName = sgName.substring(oGroup.name.length + 1);
+				var oBone = oHumanFigure.findNodeChild(sBoneName, true);
+				if (!oBone) return;
+
+				for (var j = obgChildren.length - 1; j >= 0; j--) oBone.addNodeChild(obgChildren[j]);
+				return;
+			}
+		}
+
+		oHumanFigure.addNodeChild(oWearable);
+	}
+	function FilterSkeletons(oNode) {
+		if (!oNode) return false;
+		return (oNode.inherits("DzSkeleton"));
+	}
+
+	function FilterShells(oNode) {
+		if (!oNode) return false;
+		return (oNode.inherits("DzGeometryShellNode"));
+	}
+
+	function RestoreNodeFollowTarget(oNode, oHumanFigure) {
+		var oData = oNode.findDataItem(DATA_ITEM_NAME);
+		if (!oData) return;
+		var oSettings = oData.getSettings();
+		var sTarget = oSettings.getStringValue(SETTINGS_TARGET, "");
+		if (!sTarget) return;
+		oRemoveQueue.AddDataToQueue(oData, oSettings, SETTINGS_TARGET)
+		//oSettings.removeValue(SETTINGS_TARGET);
+		if (sTarget == oHumanFigure.name) {
+			oNode.setFollowTarget(oHumanFigure);
+			return;
+		}
+		var oTarget = oHumanFigure.findNodeChild(sTarget);
+		if (!oTarget) return;
+		oNode.setFollowTarget(oTarget);
+	}
+
+	function RestoreMaterialsFromFile(oNode) {
+		var oData = oNode.findDataItem(DATA_ITEM_NAME);
+		if (!oData) return true;
+		var oDataSettings = oData.getSettings();
+		if (!oDataSettings) return true;
+		var sFileName = oDataSettings.getStringValue(SETTINGS_FILE_NAME, "");
+		//if (sFileName) oDataSettings.removeValue(SETTINGS_FILE_NAME);
+		if (sFileName) oRemoveQueue.AddDataToQueue(oData, oDataSettings, SETTINGS_FILE_NAME);
+
+		var sUVs = oDataSettings.getStringValue(SETTINGS_UVS, "");
+		//if (sUVs) oDataSettings.removeValue(SETTINGS_UVS);
+		if (sFileName) oRemoveQueue.AddDataToQueue(oData, oDataSettings, SETTINGS_UVS);
+		//");
+
+		if (!sFileName) return true;
+		var sPath = PATH_TEMP + sFileName + ".duf";
+		var fMaterial = new DzFile(sPath);
+		if (!fMaterial.exists()) return err("File + '" + sPath + "' + doesn't exist.", true);
+
+		var oContentMgr = App.getContentMgr();
+		beginNodeSelectionHold();
+		Scene.selectAllNodes(false);
+		Scene.setPrimarySelection(oNode);
+		oContentMgr.openFile(sPath, true);
+		restoreNodeSelectionHold();
+
+		if (sUVs) {
+			//update UVs
+			var oObj = oNode.getObject();
+			var oShape = oObj.getCurrentShape();
+
+			var arrUVs = sUVs.split(ARRAY_SEPARATOR);
+			for (var i = 0; i < arrUVs.length; i += 2) {
+				var sMaterialName = arrUVs[i];
+				var sUVvalue = arrUVs[i + 1];
+				var oMaterial = oShape.findMaterial(sMaterialName);
+
+				if (!oMaterial) {
+					err("Error: Unable to locate geoshell materials. This issue often arises when surface-creating assets, typically those representing breasts or genitalia, are separated. Please ensure all related assets are moved together.\nFor more information, refer to the 'Known Issues Chapter' in the manual.");
+					//processEvents();
+					return false;
+				}
+
+				var oUVprop = oMaterial.getUVSetControl();
+				oUVprop.setValueFromString(sUVvalue);
+			}
+		}
+
+
+		oRemoveQueue.AddFileToQueue(fMaterial);
+		return true
+	}
+
+	function GenerateUniqueGroupFileName(oFigure) {
+		return GenerateUniqueID(5) + oFigure.elementID.toString();
+	}
+
+	function GenerateUniqueID(id_length) {
+		if (!id_length) id_length = 10;
+		var result = '';
+		var characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+		var charactersLength = characters.length;
+		for (var i = 0; i < id_length; i++) {
+			result += characters.charAt(Math.floor(Math.random() * charactersLength));
+		}
+
+		return result;
+	}
+
+	function BindHumanFigureToGroup(oHumanFigure, oGroup) {
+		var oFigData = oHumanFigure.findDataItem(DATA_ITEM_NAME);
+		if (!oFigData) {
+			oFigData = new DzSimpleElementData(DATA_ITEM_NAME, true);
+			oHumanFigure.addDataItem(oFigData);
+		}
+
+		var oFigDataSettings = oFigData.getSettings();
+		var sID = oFigDataSettings.getStringValue(SETTINGS_ID, "");
+
+		if (!sID) {
+			sID = GenerateUniqueID();
+			oFigDataSettings.setStringValue(SETTINGS_ID, sID);
+		}
+
+		var oGroupData = oGroup.findDataItem(DATA_ITEM_NAME);
+		if (!oGroupData) {
+			oGroupData = new DzSimpleElementData(DATA_ITEM_NAME, true);
+			oGroup.addDataItem(oGroupData);
+		}
+
+		var oGroupDataSettings = oGroupData.getSettings();
+		oGroupDataSettings.setStringValue(SETTINGS_ID, sID);
+	}
+
+	function SaveShellMaterialsInFile(oHumanFigure, oShellNode) {
+		// Get the asset IO manager
+		var oAssetIOMgr = App.getAssetIOMgr();
+		var nAssetIOFilter = oAssetIOMgr.findAssetFilterIndex("DzMaterialAssetFilter");
+		// If we did not find an asset filter with the class name we wanted
+		if (nAssetIOFilter < 0) return err("An asset filter with the class name DzMaterialAssetFilter could not be found.");
+
+		// Get the asset filter at the prescribed index
+		var oAssetIOFilter = oAssetIOMgr.getAssetFilter(nAssetIOFilter);
+		if (!oAssetIOFilter) return err("An asset filter with the class name DzMaterialAssetFilter could not be found.");
+
+		// Get the default settings
+		var oSettings = new DzFileIOSettings();
+		oAssetIOFilter.getDefaultOptions(oSettings);
+
+		if (!oAssetIOFilter.getOptions(oSettings, false, "")) return
+
+		// Set the initial state of whether or not to exclude material definitions
+		oSettings.setBoolValue("OmitDefinitions", false);
+		// Set the label of the root node to find it in the scene; this can be used to override selection within the scene
+		oSettings.setStringValue("RootLabel", oShellNode.getLabel());
+
+		// Define an explicit list of material names
+		var aMaterialNames = ["Arms", "Ears", "Face", "Legs", "Torso"];
+		// Define an explicit list of property names
+		var aPropertyNames = [["Diffuse Color", "Value"], ["Diffuse Strength", "Value"]];
+
+		// Clear the lists
+		aMaterialNames = [];
+		aPropertyNames = [];
+
+		// Define an list of property group paths to include
+		var aPropertyBasePaths = [];
+
+		// Define whether to include property attributes
+		var bIncludeValue = true;
+		var bIncludeImage = true;
+
+		// Get the object for the node
+		var oObject = oShellNode.getObject();
+		// If we do not have an object
+		if (!oObject) {
+			// We are done..
+			return;
+		}
+
+		// Get the current shape for the object
+		var oShape = oObject.getCurrentShape();
+		// If we do not have a shape
+		if (!oShape) {
+			// We are done..
+			return;
+		}
+
+
+		aExtraMaterials = GetExtraMaterialsArray(oShape, GetHumanFigureMaterialsNames(oHumanFigure));
+		if (!aExtraMaterials) return;
+		aMaterials = oShape.getAllMaterials();
+
+		// Declare working variables
+		var oMaterial, oProperty;
+		var aProps;
+		var sPath;
+		var bHasProp;
+		var vProp;
+
+		// Iterate over the materials
+		for (var i = 0; i < aMaterials.length; i += 1) {
+			// Get the 'current' material
+			oMaterial = aMaterials[i];
+
+			// Initialize
+			bHasProp = false;
+
+			// Get the properties associated with the material
+			aProps = getElementProperties(oMaterial, true, true);
+			// Iterate over the properties
+			for (var j = 0; j < aProps.length; j += 1) {
+				// Get the 'current' property
+				oProperty = aProps[j];
+
+				// Initialize
+				vProp = undefined;
+
+				// If we are filtering by group
+				if (aPropertyBasePaths.length > 0) {
+					// Get the group path
+					sPath = oProperty.getPath();
+
+					// Iterate over base paths
+					for (var k = 0; k < aPropertyBasePaths.length; k += 1) {
+						// If this prop resides within
+						if (sPath.startsWith(aPropertyBasePaths[k])) {
+							// Get the property entry
+							vProp = getPropertyEntry(oProperty, bIncludeValue, bIncludeImage);
+
+							// We are done...
+							break;
+						}
+					}
+					// If we are not filtering
+				} else {
+					// Get the property entry
+					vProp = getPropertyEntry(oProperty, bIncludeValue, bIncludeImage);
+				}
+
+				// If we have a property entry
+				if (vProp) {
+					// Append it to our list
+					aPropertyNames.push(vProp);
+					// Update our flag
+					bHasProp = true;
+				}
+			}
+
+			// If we have a reason to include the material
+			if (bHasProp) {
+				// Append its name to the list
+				aMaterialNames.push(oMaterial.name);
+			}
+		}
+
+		// Set common property options for multiple muterials
+		setCommonMaterialPropertyOptions(oSettings, aMaterialNames, aPropertyNames);
+
+		oSettings.setBoolValue("BypassFilter", false);
+		oSettings.setBoolValue("CompressOutput", false);
+		oSettings.setBoolValue("RunSilent", true);
+
+		// Construct the name of the file to save to; omit file extension
+		var sFileName = GenerateUniqueGroupFileName(oShellNode);
+		var sFilePath = PATH_TEMP + sFileName;
+
+		AddStringDataToNodeEx(oShellNode, DATA_ITEM_NAME, [[SETTINGS_FILE_NAME, sFileName], [SETTINGS_UVS, GetSerializedUVs(aExtraMaterials)]]);
+		var nn = Scene.getPrimarySelection();
+		print(nn.getLabel());
+
+		// Use the asset manager to save a file, using the filter and defined settings
+		oAssetIOMgr.doSaveWithOptions(oAssetIOFilter, oSettings, true, sFilePath, PATH_TEMP, "");
+		print("here2");
+		// Clean up; do not leak memory
+		oAssetIOFilter.deleteLater();
+	}
+	function AddStringDataToNodeEx(oNode, sDataName, arrSettingsValuePairs) {
+		if (!arrSettingsValuePairs) return;
+
+		var oData = oNode.findDataItem(sDataName);
+		if (!oData) {
+			oData = new DzSimpleElementData(sDataName, true);
+			oNode.addDataItem(oData);
+		}
+		var oDataSettings = oData.getSettings();
+		for (var i = 0; i < arrSettingsValuePairs.length; i++) {
+			var arrPair = arrSettingsValuePairs[i];
+			oDataSettings.setStringValue(arrPair[0], arrPair[1]);
+		}
+	}
+
+	function AddStringDataToNode(oNode, sDataName, sKey, sValue) {
+		if (!sKey || !sDataName || !oNode) return;
+
+		var oData = oNode.findDataItem(sDataName);
+		if (!oData) {
+			oData = new DzSimpleElementData(sDataName, true);
+			oNode.addDataItem(oData);
+		}
+		var oDataSettings = oData.getSettings();
+		oDataSettings.setStringValue(sKey, sValue);
+	}
+
+
+
+	function GetSerializedUVs(arrMaterials) {
+		var arrResult = [];
+		for (var i = 0; i < arrMaterials.length; i++) {
+			var oMaterial = arrMaterials[i];
+			var oUVprop = oMaterial.getUVSetControl();
+			var sUV = oUVprop.getStringValue();
+			arrResult.push(oMaterial.name);
+			arrResult.push(sUV);
+		}
+		var sResult = arrResult.join(ARRAY_SEPARATOR);
+		return sResult;
+	}
+
+	//create/find a group for belongins oGroup
+	function GetBelongingsGroup(oFigure, bCreateIfNotExists) {
+		var sGroupName = String(oFigure.elementID) + "_belongings";
+
+		//var oGroup = Scene.findNode(sGroupName);
+		var oGroup = FindBoundGroup(oFigure);
+		if (!bCreateIfNotExists) return oGroup;
+
+		if (!oGroup) {
+			//create new group
+			oGroup = new (DzGroupNode);
+			oGroup.setVisible(false);
+			var sGroupLabel = oFigure.getLabel() + "_belongings";
+			oGroup.setName(sGroupName);
+			oGroup.setLabel(sGroupLabel);
+			Scene.addNode(oGroup);
+			BindHumanFigureToGroup(oFigure, oGroup);
+		}
+
+		return oGroup;
+	}
+
+	function FindBoundGroup(oHumanFigure) {
+		var oFigData = oHumanFigure.findDataItem(DATA_ITEM_NAME);
+		if (!oFigData) return false;
+		var oFigDataSettings = oFigData.getSettings();
+		var sID = oFigDataSettings.getStringValue(SETTINGS_ID, "");
+		if (!sID) return false;
+
+		var arrNodes = Scene.getNodeList();
+		for (var i = 0; i < arrNodes.length; i++) {
+			var oGroup = arrNodes[i];
+			if (oGroup.className() != "DzGroupNode") continue;
+			//this is a group
+			var oGroupData = oGroup.findDataItem(DATA_ITEM_NAME);
+			if (!oGroupData) continue;
+
+			var oGroupDataSettings = oGroupData.getSettings();
+			var sGroupID = oGroupDataSettings.getStringValue(SETTINGS_ID, "");
+			if (sID != sGroupID) continue;
+			return oGroup; //found
+		}
+		return false;
+	}
+
+	function FindBoundFigure(oGroup) {
+		var oFigData = oGroup.findDataItem(DATA_ITEM_NAME);
+		if (!oFigData) return false;
+		var oFigDataSettings = oFigData.getSettings();
+		var sID = oFigDataSettings.getStringValue(SETTINGS_ID, "");
+		if (!sID) return false;
+
+		var arrNodes = Scene.getNodeList();
+		for (var i = 0; i < arrNodes.length; i++) {
+			var oFigure = arrNodes[i];
+			if (oFigure.elementID == sID) continue;
+
+			var oFigureData = oFigure.findDataItem(DATA_ITEM_NAME);
+			if (!oFigureData) continue;
+
+			var oFigureDataSettings = oFigureData.getSettings();
+			var sGroupID = oFigureDataSettings.getStringValue(SETTINGS_ID, "");
+			if (sID != sGroupID) continue;
+			return oFigure; //found
+		}
+		return false;
+	}
+
+
+	//return the human figure where the selected node is parented to
+	function GetCurrentHumanFigure(oNode) {
+		if (!oNode) return false;
+
+		if (IsNodeHumanFigure(oNode)) {
+			return oNode;
+		} else if (oNode.inherits("DzGroupNode")) {
+			var oFigure = FindBoundFigure(oNode);
+			if (oFigure) return oFigure;
+		}
+
+		return GetCurrentHumanFigure(oNode.getNodeParent());
+	}
+
+	function IsNodeHumanFigure(oNode) {
+
+		if (oNode.inherits("DzFigure")) {
+			var sObjName = oNode.objectName;
+			if (ARR_HUMAN_FIGURES_NAMES.indexOf(sObjName) > -1) return true;
+			/*
+			if (sObjName.startsWith("Genesis")) {
+				//found Genesis3.. or Genesis8... or Genesis9...
+				//if (sObjName.startsWith("Genesis9") && (sObjName != "Genesis9")) return false; //no "Genesis9 Mouth" or similar
+				if (!(sObjName.startsWith("Genesis9") && (sObjName != "Genesis9"))) { //no "Genesis9 Mouth" or similar
+					return true;
+				}
+			}*/
+		}
+		return false;
+	}
+
+	function GetAnotherHumanFigureParentedToTheCurrent(oHumanFigure) {
+		if (!oHumanFigure) return;
+		var arrNodes = oHumanFigure.getNodeChildren(true);
+		for (var i = 0; i < arrNodes.length; i++) {
+			var oNode = arrNodes[i];
+			if (IsNodeHumanFigure(oNode)) return oNode;
+		}
+		return false;
+	}
+
+	//Get/Create a group to place nodes that were parented to bones of the figure
+	//and parents the oChild to it
+	function ParentToBoneGroup(oBone, oChild) {
+
+		var sbgName = oGroup.name + "_" + oBone.name;
+
+		var oBoneGroup = oGroup.findNodeChild(sbgName, false);
+		if (!oBoneGroup) {
+			//create bone group
+			oBoneGroup = new (DzGroupNode);
+			oBoneGroup.setName(sbgName);
+			var sgbLabel = oGroup.getLabel() + "_" + oBone.getLabel();
+			oBoneGroup.setLabel(sgbLabel);
+			oGroup.addNodeChild(oBoneGroup);
+		}
+		//parent the child to the bone group
+		oBoneGroup.addNodeChild(oChild);
+	}
+
+
+	//returns True if its parented to the root of the human figure or to one of its bones
+	//and false it its parented to another node
+	function FilterParentedToHumanFigureAndNotAnExemption(oChild) {
+		if (oChild.inherits("DzBone")) return false;
+
+		var oNode = oChild;
+		if (this) {
+			while (oNode) {
+				if (this.indexOf(oNode.name) > -1) return false; //remove exemptions from moving to the group like eyelashes
+
+				oNode = oNode.getNodeParent(); //can't be parented to an exempion node
+				if (oNode.name == oHumanFigure.name) break;
+			}
+		}
+
+
+		return IsParentedToHuman(oChild.getNodeParent());
+
+	}
+
+	function FilterMarkedForTransferring(oWearable) {
+		var oData = oWearable.findDataItem(DATA_ITEM_NAME);
+		if (!oData) return bTransferByDefault;
+
+		var oDataSettings = oData.getSettings();
+		var sValue = oDataSettings.getStringValue(SETTIGNS_TRANSFER, bTransferByDefault ? VALUE_TRANSFER_YES : VALUE_TRANSFER_NO);
+		return (sValue == VALUE_TRANSFER_YES);
+	}
+
+	//returns true if oNode is parented to the human figure directly and false if its parented to another node
+	function IsParentedToHuman(oNode) {
+
+		if (!oNode)
+			return false;
+
+
+		if (oNode.inherits("DzBone"))
+			return IsParentedToHuman(oNode.getNodeParent());
+
+		if (!oNode)
+			return false;
+
+		var sObjName = oNode.objectName;
+		if (sObjName.startsWith("Genesis")) {
+			if (sObjName.startsWith("Genesis9") && sObjName != "Genesis9") return false; //parented to Genesis9Mouth or something
+			return true;
+		}
+
+		return false;
+	}
+
+	function err(sMessage, retValue) {
+		MessageBox.critical(sMessage, "Critical Error", "&OK");
+		//MessageBox.critical(qsTr(sMessage), qsTr("Critical Error"), qsTr("&OK"));
+		return retValue;
+	}
+	function question(sMessage) {
+		return MessageBox.warning(sMessage, "matew's Wearables", "&Yes", "&No");
+	}
+
+	function GetHumanFigureMaterialsNames(oFigure) {
+		if (!oFigure) return false;
+		var sName = oFigure.name;
+		var arrMaterials = [];
+		if (sName == "Genesis9") {
+			arrMaterials = ["Fingernails", "Toenails", "Legs", "Mouth Cavity", "Arms", "Head", "Body"];
+		} else if (sName == "Genesis8_1Female" || sName == "Genesis8_1Male") {
+			arrMaterials = ["Body", "Face", "Lips", "Teeth", "Head", "Ears", "Legs", "EyeSocket", "Mouth", "Arms", "Pupils", "EyeMoisture", "Fingernails", "Cornea", "Irises", "Sclera", "Toenails"];
+		} else if (sName == "Genesis8Female" || sName == "Genesis8Male") {
+			arrMaterials = ["Torso", "Face", "Lips", "Teeth", "Ears", "Legs", "EyeSocket", "Mouth", "Arms", "Pupils", "EyeMoisture", "Fingernails", "Cornea", "Irises", "Sclera", "Toenails"];
+		} else if (sName == "Genesis3Female" || sName == "Genesis3Male") {
+			arrMaterials = ["Eyelashes", "Fingernails", "Toenails", "Cornea", "Pupils", "Face", "Lips", "Teeth", "Sclera", "Torso", "Ears", "Irises", "Legs", "EyeSocket", "EyeMoisture", "Mouth", "Arms"];
+		} else if (sName == "Genesis2Female" || sName == "Genesis2Male") {
+			arrMaterials = ["Legs", "EyeReflection", "Nostrils", "Lacrimals", "Pupils", "Lips", "Tear", "Gums", "Irises", "Teeth", "Cornea", "Face", "Toenails", "Sclera", "Fingernails", "Head", "Ears", "Hands", "Shoulders", "Neck", "Hips", "Torso", "Nipples", "Forearms", "Feet", "Eyelashes", "Tongue", "InnerMouth"];
+		} else if (sName == "Genesis") {
+			arrMaterials = ["3_SkinFoot", "6_Eyelash", "5_Sclera", "5_Pupil", "5_Iris", "5_Cornea", "4_Tongue", "4_Teeth", "4_InnerMouth", "4_Gums", "3_SkinArm", "2_SkinTorso", "2_Nipple", "2_SkinNeck", "3_SkinForearm", "3_SkinLeg", "2_SkinHip", "2_SkinHead", "3_SkinHand", "7_Tear", "1_Nostril", "1_Lip", "5_Lacrimal", "1_SkinFace", "3_Fingernail", "3_Toenail"];
+		}
+
+		return arrMaterials;
+	}
+
+	function GetDefaultTransferExemptionsList(oFigure) {
+		if (!oFigure) return false;
+		var sName = oFigure.name;
+		var arrExemptions = [];
+		if (sName == "Genesis9") {
+			arrExemptions = ["Genesis9Eyelashes", "Genesis9Tear", "Genesis9Eyes", "Genesis9Mouth", "G9EyebrowCards"]; //, "SHTongue_933"];
+		} else if (sName == "Genesis8_1Female") {
+			arrExemptions = ["Genesis8_1FemaleEyelashes", "Female 8_1 Tear"];
+		} else if (sName == "Genesis8_1Male") {
+			arrExemptions = ["Genesis8_1MaleEyelashes", "Male 8_1 Tear"];
+		} else if (sName == "Genesis8Female") {
+			arrExemptions = ["Genesis8FemaleEyelashes"];
+		} else if (sName == "Genesis8Male") {
+			arrExemptions = ["Genesis8MaleEyelashes"];
+		}
+
+		return arrExemptions;
+	}
+
+	function GetExtraMaterialsArray(oShape, arrDefaultMaterialsNames) {
+		if (!arrDefaultMaterialsNames || !oShape) return false;
+		var arrMaterials = oShape.getAllMaterials();
+
+		var n = arrMaterials.length;
+		if (n == arrDefaultMaterialsNames.length) return false;
+
+		var arrExtra = [];
+		for (var i = 0; i < n; i++) {
+			var oMat = arrMaterials[i];
+			if (arrDefaultMaterialsNames.indexOf(oMat.name) >= 0) continue;
+			arrExtra.push(oMat);
+		}
+
+		return arrExtra;
+	}
+
+
+	/*********************************************************************/
+	// void : A function for setting the property options for a node
+	function setMaterialPropertyOptions(oSettings, sMaterialName, aPropNames) {
+		// Set the property options for the named material
+		setElementPropertyOptions(oSettings, "MaterialNames", sMaterialName, aPropNames, true, false);
+	};
+
+	/*********************************************************************/
+	// void : A function for setting common property options for multiple nodes
+	function setCommonMaterialPropertyOptions(oSettings, aMaterialNames, aPropNames) {
+		// Iterate over the material names array
+		for (var i = 0; i < aMaterialNames.length; i += 1) {
+			// Set the property options for the 'current' material name
+			setMaterialPropertyOptions(oSettings, aMaterialNames[i], aPropNames);
+		}
+	};
+
+	/*********************************************************************/
+	// String || Array<String,String> : A function for getting the property entry
+	function getPropertyEntry(oProperty, bIncludeValue, bIncludeImage) {
+		// If the property is numeric and mappable
+		if (oProperty.inherits("DzNumericProperty") && oProperty.isMappable()) {
+			// If we are including value and image
+			if (bIncludeValue == bIncludeImage) {
+				// Use the label
+				return oProperty.getLabel();
+				// If we are only including the value
+			} else if (bIncludeValue) {
+				// Use the label and Value keyword
+				return [oProperty.getLabel(), "Value"];
+				// If we are only including the image
+			} else if (bIncludeImage) {
+				// Use the label and Image keyword
+				return [oProperty.getLabel(), "Image"];
+			} else {
+				return undefined;
+			}
+		}
+
+		// Use the label
+		return oProperty.getLabel();
+	};
+
+	/*********************************************************************/
+
+	/*********************************************************************/
+	// Array<DzProperty> : A function for getting a list of the properties in a group
+	function getGroupProperties(oGroup, bTraverse, bRecurse) {
+		// Declare an array to hold properties
+		var aProperties = [];
+
+		// If a group is not passed in
+		if (!oGroup) {
+			// We are done, return an empty array
+			return aProperties;
+		}
+
+		// Get the number of proeprties in the group
+		var nProperties = oGroup.getNumProperties();
+		// Pre-size the properties array
+		aProperties = new Array(nProperties);
+		// Iterate over the properties, setting each element in the array
+		for (var i = 0; i < nProperties; i += 1) {
+			// Assign the property to the position in the array
+			aProperties[i] = oGroup.getProperty(i);
+		}
+
+		// If we are recursing
+		if (bRecurse) {
+			// Concatenate the properties array from child groups
+			aProperties = aProperties.concat(
+				getGroupProperties(oGroup.getFirstChild(), true, bRecurse));
+		}
+
+		// If we are traversing
+		if (bTraverse) {
+			// Concatenate the properties array from sibling groups
+			aProperties = aProperties.concat(
+				getGroupProperties(oGroup.getNextSibling(), bTraverse, bRecurse));
+		}
+
+		// Return the array of properties
+		return aProperties;
+	};
+
+	/*********************************************************************/
+	// Array<DzProperty> : A function for getting the list properties for an element
+	function getElementProperties(oElement, bTraverse, bRecurse) {
+		// Get the property group tree for the element
+		var oPropertyGroupTree = oElement.getPropertyGroups();
+
+		// If the application version is 4.9.0.101 or newer and we want all properties
+		if (App.version64 >= 0x0004000900040065 && bTraverse && bRecurse) {
+			// Return the properties for the element
+			return oPropertyGroupTree.getAllProperties();
+		}
+
+		// Get the first group in the tree
+		var oPropertyGroup = oPropertyGroupTree.getFirstChild();
+		// Return the properties for the element
+		return getGroupProperties(oPropertyGroup, bTraverse, bRecurse);
+	};
+
+
+	/*********************************************************************/
+	// void : A function for setting the property options for an element
+	function setElementPropertyOptions(oSettings, sElementSettingsKey, sElementName, aPropNames, bSubItems, bNameAsKey) {
+		// Get the (nested) settings that hold the named element and properties
+		var oElementsSettings = oSettings.getSettingsValue(sElementSettingsKey);
+		// If the object doesn't already exist
+		if (!oElementsSettings) {
+			// Create it
+			oElementsSettings = oSettings.setSettingsValue(sElementSettingsKey);
+		}
+
+		// Get the (nested) settings object for the element
+		var oElementSettings = oElementsSettings.getSettingsValue(sElementName);
+		// If the object doesn't already exist
+		if (!oElementSettings) {
+			// Create it
+			oElementSettings = oElementsSettings.setSettingsValue(sElementName);
+		}
+
+		// Declare working variable
+		var vPropertyItem;
+		var sPropertyName;
+		var oPropertySettings, oSubItemSettings;
+
+		// Iterate over the property items
+		for (var i = 0; i < aPropNames.length; i += 1) {
+			// Get the 'current' property item
+			vPropertyItem = aPropNames[i];
+
+			// If the filter doesn't support property sub-items,
+			// or the property item is a string
+			if (!bSubItems || typeof (vPropertyItem) == "string") {
+				// Set the property name to the item
+				sPropertyName = vPropertyItem;
+
+				// Add a setting wherein the key is the index in the list
+				// and the value is the property name
+				oElementSettings.setStringValue(String(i), sPropertyName);
+				// If the property item is an array
+			} else if (typeof (vPropertyItem) == "object" && Array.isArray(vPropertyItem)) {
+				// Set the property name to the first item, which should be a string
+				sPropertyName = (vPropertyItem.length > 0 &&
+					typeof (vPropertyItem[0]) == "string" ? vPropertyItem[0] : "");
+				// If the name was not set
+				if (sPropertyName.isEmpty()) {
+					// Next!!
+					continue;
+				}
+
+				if (bNameAsKey) {
+					// Get the (nested) settings object for the property
+					oPropertySettings = oElementSettings.getSettingsValue(sPropertyName);
+					// If the object doesn't already exist
+					if (!oPropertySettings) {
+						// Create it
+						oPropertySettings = oElementSettings.setSettingsValue(sPropertyName);
+					}
+
+					// Iterate over the items, skippping the first element
+					for (var j = 1; j < vPropertyItem.length; j += 1) {
+						// Set a named key to the value
+						oPropertySettings.setStringValue(String(j - 1), vPropertyItem[j])
+					}
+				} else {
+					// Get the (nested) settings object for the property
+					oPropertySettings = oElementSettings.getSettingsValue(i);
+					// If the object doesn't already exist
+					if (!oPropertySettings) {
+						// Create it
+						oPropertySettings = oElementSettings.setSettingsValue(i);
+					}
+
+					// Set the name setting
+					oPropertySettings.setStringValue("name", sPropertyName);
+					// Get the (nested) settings object for the subitems
+					oSubItemSettings = oPropertySettings.getSettingsValue("subitems");
+					// If the object doesn't already exist
+					if (!oSubItemSettings) {
+						// Create it
+						oSubItemSettings = oPropertySettings.setSettingsValue("subitems");
+					}
+
+					// Iterate over the items, skippping the first element
+					for (var j = 1; j < vPropertyItem.length; j += 1) {
+						// Set an index key to the value
+						oSubItemSettings.setStringValue(String(j - 1), vPropertyItem[j])
+					}
+				}
+			}
+		}
+	};
+
+})();
