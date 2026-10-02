@@ -1,6 +1,6 @@
 # Wearables Manager 2 settings
 
-Open **Wearables Manager Icon Rules** or **Wearables Manager Supported Figures** from the same Scripts folder as WM2. The Full and Menu dialogs also have settings buttons. The separate figure editor can register a custom figure before WM2 recognizes it.
+Open **Wearables Manager Icon Rules** or **Wearables Manager Supported Figures** from the same Scripts folder as WM2. Full has both settings buttons; Menu retains **Icon Rules...**. Use the separate figure editor to manage recognition and child protection before opening Menu.
 
 ## Icon rules
 
@@ -33,7 +33,9 @@ Fresh settings start with ten known Genesis internal names, through Genesis9. Th
 
 Entries use exact internal names, so changing a label does not change recognition. Remove edits the draft registry. **Reset Genesis Defaults** adds missing Genesis entries while retaining custom entries.
 
-An unsupported selected independent figure opens the editor before any transfer. After Save, WM2 reloads settings and checks the current selection and nested figures again. Cancel leaves the scene alone. An open transfer dialog retains its current figure registry, while saved protection applies immediately. Re-add a removed figure type before restoring its stored wearables.
+When Menu cannot resolve a supported owner from the selected object, it offers the figure editor before opening its transfer dialog. Opening setup does not register or move anything: choose an eligible independent figure or bone, use **Add Selected Figure**, review child protection, then **Save**. A prop or group can reach setup but cannot itself be registered. Full, Take Off and Put On offer setup for an unsupported selected independent figure or bone. With no selection, select a figure first or use the separate editor.
+
+After Save, WM2 reloads settings, checks for an active process, reads the current selection again, resolves its supported owner and checks for nested figures. If the selection is still unsupported, the transfer dialog stays closed. Cancel returns without opening it. An open Full transfer dialog retains its current figure registry, while saved protection applies immediately. Re-add a removed figure type before restoring its stored wearables.
 
 Select a registry entry and open **Protected Children...** to edit excluded child names. The five existing Genesis attachment profiles are supplied by default. Exact internal names match within that figure's descendants, including same-name copies. Protection includes the child's subtree and any ancestor that would carry it into storage. Full, Menu, Take Off and Put On's removal path check again immediately before parenting or FitTo changes. Alt and transfer marks do not override protection. Already-stored items remain eligible for restoration.
 

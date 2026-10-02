@@ -2311,7 +2311,7 @@ include(sWM2ResourcesPath + "/WM2 Settings UI.dsa");
 	if (!(oNode = Scene.getPrimarySelection())) return err("Please, select a human figure to proceed.");
 	oHumanFigure = GetCurrentHumanFigure(oNode);
 	if (!oHumanFigure) {
-		if (!WM2Support.selectedFigure(oNode)) return err("Select a live independent figure or one of its bones.");
+		// Offer setup before the supported-owner gate; registration remains explicit.
 		var wmFigureSetup = WM2ShowSupportedFigures(PATH_ICONS);
 		if (!wmFigureSetup.saved) return;
 		oWM2Config = WM2Support.load(PATH_ICONS).config;
@@ -3216,11 +3216,6 @@ include(sWM2ResourcesPath + "/WM2 Settings UI.dsa");
 			}
 		}
 		connect(wmIconRulesButton, "clicked()", wmIconRulesButton, WM2OpenIconRulesFromDialog);
-		var wmFiguresButton = WM2SettingsButton(wmSettingsRow, "Supported Figures...", PATH_ICONS, "Wearables Manager - Group.png");
-		connect(wmFiguresButton, "clicked()", wmFiguresButton, function () {
-			var result = WM2ShowSupportedFigures(PATH_ICONS);
-			if (result.saved) oWM2Config.protectedChildren = WM2Support.clone(result.config.protectedChildren);
-		});
 
 		// 2 H Container for Scrool areas
 		var wcontScrollsHolder = new DzHGroupBox(wgroupOuter);

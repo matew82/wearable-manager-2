@@ -172,6 +172,70 @@ for (const filename of files) {
         });
     }
 }
+const menuSource = fs.readFileSync(path.join(sourceRoot, 'Wearables Manager Menu.dsa'), 'utf8');
+for (const type of ['DzNode', 'DzGroupNode', 'customAttachment']) {
+    for (const mode of ['cancel', 'stillUnsupported', 'selectionChanged', 'selectionCleared']) {
+        test('Menu: unresolved ' + type + ' reaches setup before owner gate: ' + mode, () => {
+            const w = world(), custom = w.node('CustomCreature', 'DzFigure'), known = w.node('Genesis9', 'DzFigure');
+            let selection = w.node('UnresolvedSelection', type === 'customAttachment' ? 'DzNode' : type);
+            if(type === 'customAttachment') custom.addNodeChild(selection);
+            let editors = 0, busy = 0, errors = 0, checks = 0, reloads = 0, selectionReads = 0;
+            const sandbox = {
+                PATH_ICONS:'/mock', Scene:{getNodeList:() => w.nodes, getPrimarySelection:() => { selectionReads++; return selection; }},
+                CheckForAnotherProcessActive:() => { checks++; return true; },
+                SetStatusBusy:() => busy++, err:() => errors++, FindBoundFigure:() => false
+            };
+            loadSupport(sandbox);
+            const originalConfig = JSON.stringify(sandbox.oWM2Config);
+            sandbox.WM2Support.selectedFigure = () => { throw Error('Setup must precede this optional registration gate'); };
+            sandbox.WM2Support.load = () => { reloads++; return {config:sandbox.WM2Support.defaults()}; };
+            sandbox.WM2ShowSupportedFigures = () => {
+                editors++;
+                if(mode === 'selectionChanged') selection = known;
+                if(mode === 'selectionCleared') selection = null;
+                return {saved:mode !== 'cancel'};
+            };
+            functions(menuSource, sandbox, ['GetCurrentHumanFigure','IsNodeHumanFigure','GetAnotherHumanFigureParentedToTheCurrent']);
+            vm.runInContext('function entry(){' + entryPrefix(menuSource) + '\nreturn oHumanFigure;}', sandbox);
+            const resolved = sandbox.entry();
+            assert.strictEqual(editors, 1);
+            assert.strictEqual(checks, mode === 'cancel' ? 1 : 2);
+            assert.strictEqual(reloads, mode === 'cancel' ? 0 : 1);
+            assert.strictEqual(selectionReads, mode === 'cancel' ? 1 : 2);
+            assert.strictEqual(busy, mode === 'selectionChanged' ? 1 : 0);
+            assert.strictEqual(errors, ['stillUnsupported','selectionCleared'].includes(mode) ? 1 : 0);
+            if(mode === 'selectionChanged') assert.strictEqual(resolved, known);
+            assert.strictEqual(JSON.stringify(sandbox.oWM2Config), originalConfig, 'Setup does not auto-register the initial selection');
+        });
+    }
+}
+for (const mode of ['noSelection','alreadyBusy','supportedOwner']) test('Menu entry: ' + mode, () => {
+    const w = world(), known = w.node('Genesis9', 'DzFigure');
+    let editors = 0, busy = 0, errors = 0, selectionReads = 0;
+    const sandbox = {
+        PATH_ICONS:'/mock', Scene:{getNodeList:() => w.nodes, getPrimarySelection:() => { selectionReads++; return mode === 'noSelection' ? null : known; }},
+        CheckForAnotherProcessActive:() => mode !== 'alreadyBusy', SetStatusBusy:() => busy++, err:() => errors++,
+        FindBoundFigure:() => false, WM2ShowSupportedFigures:() => { editors++; return {saved:false}; }
+    };
+    loadSupport(sandbox);
+    functions(menuSource, sandbox, ['GetCurrentHumanFigure','IsNodeHumanFigure','GetAnotherHumanFigureParentedToTheCurrent']);
+    vm.runInContext('function entry(){' + entryPrefix(menuSource) + '\nreturn oHumanFigure;}', sandbox);
+    const resolved = sandbox.entry();
+    assert.strictEqual(editors, 0); assert.strictEqual(busy, mode === 'supportedOwner' ? 1 : 0);
+    assert.strictEqual(errors, mode === 'noSelection' ? 1 : 0);
+    assert.strictEqual(selectionReads, mode === 'alreadyBusy' ? 0 : 1);
+    if(mode === 'supportedOwner') assert.strictEqual(resolved, known);
+});
+test('Menu removes figure settings button while retaining icon settings and separate launcher', () => {
+    assert(!/WM2SettingsButton\([^\n]*"Supported Figures\.\.\."/.test(menuSource));
+    assert(/WM2SettingsButton\([^\n]*"Icon Rules\.\.\."/.test(menuSource));
+    assert(/connect\(wmIconRulesButton, "clicked\(\)"/.test(menuSource));
+    assert(!/wmFiguresButton/.test(menuSource));
+    const launcher = fs.readFileSync(path.join(sourceRoot, 'Wearables Manager Supported Figures.dsa'), 'utf8');
+    assert(/WM2ShowSupportedFigures\(/.test(launcher));
+    const full = fs.readFileSync(path.join(sourceRoot, 'Wearables Manager Full.dsa'), 'utf8');
+    assert(/WM2SettingsButton\([^\n]*"Supported Figures\.\.\."/.test(full));
+});
 const failures = results.filter(result => !result.pass);
 console.log(JSON.stringify({scope:'Actual source-extracted entry, protection and zero-removal tests; mocked native services; no DAZ or writes', total:results.length, passed:results.length-failures.length, failed:failures.length, failures}));
 process.exitCode = failures.length ? 1 : 0;
