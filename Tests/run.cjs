@@ -35,6 +35,7 @@ const suites=[
  ['features/figure-entry.cjs','--sourceRoot',root],
  ['features/ui.cjs'],
  ['features/menu-preview.cjs'],
+ ['features/asset-icons.cjs'],
  ['features/icon-import.cjs'],
  ['features/integration.cjs','--source-root',root,'--output',path.join(output,'features-integration.json')],
  ['integration.cjs','--source-root',root],

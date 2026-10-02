@@ -9,7 +9,7 @@ var WM2Support = (function () {
         {figure:"Genesis8Female",children:["Genesis8FemaleEyelashes"]},
         {figure:"Genesis8Male",children:["Genesis8MaleEyelashes"]}
     ];
-    var MAX_RULES = 256, MAX_FIGURES = 256, MAX_PATTERN = 256;
+    var MAX_RULES = 256, MAX_FIGURES = 256, MAX_PATTERN = 256, MAX_ASSET_PATTERN = 2048;
     var MAX_NAME = 256, MAX_ICON = 128, MAX_FILE_BYTES = 262144;
     var serial = 0;
     var own = Object.prototype.hasOwnProperty;
@@ -93,12 +93,13 @@ var WM2Support = (function () {
             if (!denseArray(config.iconRules, MAX_RULES)) return invalid("iconRules must be a dense array with at most " + MAX_RULES + " entries.");
             if (!denseArray(config.supportedFigures, MAX_FIGURES)) return invalid("supportedFigures must be a dense array with at most " + MAX_FIGURES + " entries.");
             var normalized = {schema:2, iconRules:[], supportedFigures:[], protectedChildren:[]};
-            var ruleSeen = {}, foldedSeen = {}, warnings = [], nameSeen = {}, kinds = {exactName:1, exactLabel:1, nameWord:1, labelWord:1, labelPrefix:1, namePrefix:1};
+            var ruleSeen = {}, foldedSeen = {}, warnings = [], nameSeen = {}, kinds = {exactName:1, exactLabel:1, exactAssetId:1, nameWord:1, labelWord:1, assetIdWord:1, labelPrefix:1, namePrefix:1};
             for (var i = 0; i < config.iconRules.length; i++) {
                 var rule = config.iconRules[i];
                 if (!object(rule) || !keysExactly(rule, {kind:1, pattern:1, icon:1})) return invalid("Icon rule " + (i + 1) + " must contain only kind, pattern and icon.");
                 if (typeof rule.kind !== "string" || !own.call(kinds, rule.kind)) return invalid("Icon rule " + (i + 1) + " has an unsupported kind.");
-                if (!cleanString(rule.pattern, MAX_PATTERN)) return invalid("Icon rule " + (i + 1) + " requires a nonempty pattern of at most " + MAX_PATTERN + " characters without control characters.");
+                var patternLimit=rule.kind==="exactAssetId" || rule.kind==="assetIdWord"?MAX_ASSET_PATTERN:MAX_PATTERN;
+                if (!cleanString(rule.pattern, patternLimit)) return invalid("Icon rule " + (i + 1) + " requires a nonempty pattern of at most " + patternLimit + " characters without control characters.");
                 if (rule.kind === "exactLabel" && rule.pattern.replace(/ \([0-9]+\)$/, "").length === 0) return invalid("Icon rule " + (i + 1) + " requires a nonempty label after removing its terminal numeric copy suffix.");
                 if (!iconBasename(rule.icon)) return invalid("Icon rule " + (i + 1) + " requires a PNG basename without a path or reserved filename.");
                 var ruleKey = "_" + rule.kind + ":" + rule.pattern;
@@ -365,6 +366,14 @@ iconNodeLabel: function (node) {
     return "";
 },
 
+// Documented DzNode.assetId is the raw asset identifier string (4.8.1.18+).
+// assetUri, assetSource, runtime IDs and names are different values.
+iconNodeAssetId: function (node) {
+    if(!node)return "";
+    try { var value=node.assetId;return typeof value==="string"?value:""; }
+    catch(e){return "";}
+},
+
 // Literal matching: both edges must be a string edge or an allowed separator.
 containsIconWord: function (value, pattern) {
     if (typeof value != "string" || typeof pattern != "string" || pattern.length == 0) return false;
@@ -382,34 +391,39 @@ containsIconWord: function (value, pattern) {
 matchIcon: function (rules, node) {
     var none = {matched:false, icon:null, ruleIndex:-1, kind:null, pattern:null};
     if (!node || !Array.isArray(rules)) return none;
-    var name = this.iconNodeName(node).toLowerCase(), label = this.iconNodeLabel(node).toLowerCase();
+    var name = this.iconNodeName(node).toLowerCase(), label = this.iconNodeLabel(node).toLowerCase(), assetId=this.iconNodeAssetId(node).toLowerCase();
     var exactLabel = this.normalizeCopyLabel(label), best = null;
     for (var i = 0; i < rules.length; i++) {
         var rule = rules[i];
         if (!rule || typeof rule.pattern != "string" || rule.pattern.length == 0 || typeof rule.icon != "string" || rule.icon.length == 0) continue;
-        var rank = 2, length = 0, fieldRank = 0, matched = false;
+        var rank = 3, length = 0, fieldRank = 0, matched = false;
         if (rule.kind == "exactName") {
             rank = 0; matched = name == rule.pattern.toLowerCase();
         } else if (rule.kind == "exactLabel") {
             rank = 1;
             var pattern = this.normalizeCopyLabel(rule.pattern).toLowerCase();
             matched = pattern.length > 0 && exactLabel == pattern;
+        } else if (rule.kind == "exactAssetId") {
+            rank=2; matched=assetId.length>0 && assetId==rule.pattern.toLowerCase();
         } else if (rule.kind == "labelWord") {
             length = rule.pattern.length; fieldRank = 0;
             matched = this.containsIconWord(label, rule.pattern);
         } else if (rule.kind == "nameWord") {
             length = rule.pattern.length; fieldRank = 1;
             matched = this.containsIconWord(name, rule.pattern);
+        } else if (rule.kind == "assetIdWord") {
+            length=rule.pattern.length;fieldRank=2;
+            matched=assetId.length>0 && this.containsIconWord(assetId,rule.pattern);
         } else if (rule.kind == "labelPrefix") {
             // Legacy rules retain their original literal prefix behavior.
-            rank = 3; length = rule.pattern.length; fieldRank = 0;
+            rank = 4; length = rule.pattern.length; fieldRank = 0;
             matched = label.indexOf(rule.pattern.toLowerCase()) == 0;
         } else if (rule.kind == "namePrefix") {
-            rank = 3; length = rule.pattern.length; fieldRank = 1;
+            rank = 4; length = rule.pattern.length; fieldRank = 1;
             matched = name.indexOf(rule.pattern.toLowerCase()) == 0;
         } else continue;
         if (!matched) continue;
-        if (!best || rank < best.rank || (rank == best.rank && rank >= 2 && (length > best.length || (length == best.length && fieldRank < best.fieldRank)))) {
+        if (!best || rank < best.rank || (rank == best.rank && rank >= 3 && (length > best.length || (length == best.length && fieldRank < best.fieldRank)))) {
             best = {rank:rank, length:length, fieldRank:fieldRank, icon:rule.icon, ruleIndex:i, kind:rule.kind, pattern:rule.pattern};
         }
     }
@@ -468,10 +482,10 @@ previewIconRules: function (rules, nodes, limit) {
     var collection=this.iconNodeCollection(nodes,cap),rows=[],matched=0;
     if(!collection.ok)return {ok:false,message:collection.message,rows:rows,scanned:0,matched:0,total:0,truncated:false,limit:cap};
     for (var i = 0; i < collection.nodes.length; i++) {
-        var name = this.iconNodeName(collection.nodes[i]), label = this.iconNodeLabel(collection.nodes[i]);
-        var result = this.matchIcon(rules, {name:name, label:label});
+        var name = this.iconNodeName(collection.nodes[i]), label = this.iconNodeLabel(collection.nodes[i]), assetId=this.iconNodeAssetId(collection.nodes[i]);
+        var result = this.matchIcon(rules, {name:name, label:label, assetId:assetId});
         if (result.matched) matched++;
-        rows.push({nodeIndex:i, name:name, label:label, normalizedLabel:this.normalizeCopyLabel(label), match:result});
+        rows.push({nodeIndex:i, name:name, label:label, assetId:assetId, normalizedLabel:this.normalizeCopyLabel(label), match:result});
     }
     return {ok:true,message:"",rows:rows,scanned:rows.length,matched:matched,total:collection.total,truncated:rows.length<collection.total,limit:cap};
 }
@@ -765,10 +779,10 @@ function WM2InstallSupportedFigures(oSupport) {
         }
         return {owner:owner,boundPair:WM2BoundPair,resolveNodeReference:WM2ResolveNodeReference,isBoneOfFigure:WM2IsBoneOfFigure,resolveBoneProxy:WM2ResolveBoneProxy,attachedRoots:attachedRoots,storedRoots:storedRoots,rows:rows,live:function(node){return live(node,nodes);},selectedFigure:function(node){return selected(node,nodes);},same:same};
     };
-    oSupport.previewMenu=function(scene,config,resolver,wholeFigure,context) {
+    oSupport.previewMenu=function(scene,config,resolver,wholeFigure,context,targetNode) {
         var empty={ok:false,message:"",title:"",rows:[]};
         try {
-            var selection=oSupport.iconSceneNodes(scene,true,2);
+            var selection=targetNode?{ok:true,nodes:[targetNode],total:1}:oSupport.iconSceneNodes(scene,true,2);
             if(!selection.ok){empty.message="Selection unavailable.";return empty;}
             if(selection.total!==1){empty.message=selection.total>1?"Select one item or figure to preview.":"Select an item, figure or bone to preview.";return empty;}
             var graph=oSupport.menuGraph(scene,config),node=graph.live(selection.nodes[0]);
@@ -787,7 +801,7 @@ function WM2InstallSupportedFigures(oSupport) {
                 }
                 raw=graph.rows(raw);
             } else raw=[{node:node,parent:node.getNodeParent(),isInGroup:false,root:node,depth:0}];
-            var result={ok:true,title:wholeFigure||figureSelection?main.getLabel():"Selected item",message:"",rows:[]};
+            var result={ok:true,title:wholeFigure||figureSelection?main.getLabel():"Selected item",owner:main,wholeFigure:!!(wholeFigure||figureSelection),message:"",rows:[]};
             for(var i=0;i<raw.length;i++){
                 var item=raw[i],effective=resolver.resolve(item.node,config.iconRules);
                 result.rows.push({node:item.node,label:oSupport.iconNodeLabel(item.node),parentLabel:item.depth>0&&item.parent?oSupport.iconNodeLabel(item.parent):"",depth:item.depth||0,isInGroup:item.isInGroup,icon:effective.icon,source:effective.source,pixmap:effective.pixmap,usable:effective.usable});
