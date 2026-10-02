@@ -116,6 +116,58 @@ function WM2SettingsRow(parent, layout) {
     rowLayout.margin = 0; rowLayout.spacing = WM2SettingsMetrics(row).spacing;
     layout.addWidget(row); return {widget:row,layout:rowLayout};
 }
+function WM2SettingsEditorRows(parent, layout, resourcePath, emptyText, onSelect) {
+    var scroll=new DzScrollArea(parent),metrics=WM2SettingsMetrics(scroll);
+    scroll.widgetResizable=true;scroll.minHeight=Math.max(180,metrics.listHeight);layout.addWidget(scroll,1);
+    var editor={scroll:scroll,entries:[],rows:[],currentItem:-1};scroll.wm2EditorRows=editor;
+    function reveal(row,focus) {
+        try {if(typeof scroll.ensureWidgetVisible==="function")scroll.ensureWidgetVisible(row.widget,8,8);}catch(e){}
+        if(focus)try {var native=row.button.getWidget();if(typeof native.setFocus==="function")native.setFocus();}catch(e){}
+    }
+    editor.select=function(index,focus) {
+        index=Number(index);if(!isFinite(index)||Math.floor(index)!==index||index<0||index>=editor.rows.length)index=-1;
+        editor.currentItem=index;
+        for(var i=0;i<editor.rows.length;i++) {
+            var row=editor.rows[i],selected=i===index;row.selected=selected;
+            WM2SettingsCSS(row.widget,"QWidget#WM2EditorRow"+i+" { background-color:"+(selected?"#293c49":"transparent")+"; border:1px solid "+(selected?"#87c9ff":"#777777")+"; border-radius:4px; }");
+            WM2SettingsCSS(row.label,"QLabel { "+(selected?"color:#87c9ff; ":"")+"border:0; background:transparent; }");
+            if(row.detailLabel)WM2SettingsCSS(row.detailLabel,"QLabel { "+(selected?"color:#dddddd; ":"")+"border:0; background:transparent; }");
+        }
+        if(index>=0)reveal(editor.rows[index],focus===true);
+        if(typeof onSelect==="function")onSelect(index);
+    };
+    editor.populate=function(entries,selectedName,focus) {
+        if(typeof selectedName==="undefined")selectedName=editor.currentItem>=0?editor.entries[editor.currentItem].name:null;
+        editor.entries=entries.slice(0);editor.rows=[];editor.currentItem=-1;
+        var body=new DzWidget(scroll),bodyLayout=new DzVBoxLayout(body);bodyLayout.margin=metrics.margin;bodyLayout.spacing=metrics.spacing;
+        for(var i=0;i<editor.entries.length;i++) {
+            var entry=editor.entries[i],row=WM2SettingsRow(body,bodyLayout);row.layout.margin=8;
+            try{row.widget.getWidget().objectName="WM2EditorRow"+i;}catch(e){}
+            var button=WM2SettingsButton(row.widget,">",resourcePath,"Wearables Manager - Arrow Right.png");
+            try{if(button.pixmap&&!button.pixmap.isNull())button.text="";}catch(e){}button.minWidth=34;button.toolTip="Select "+entry.name;
+            button.wm2RowName=entry.name;button.wm2RowIndex=i;row.layout.addWidget(button);
+            var textColumn=new DzWidget(row.widget),textLayout=new DzVBoxLayout(textColumn);textLayout.margin=0;textLayout.spacing=2;
+            var label=WM2SettingsPlainLabel(textColumn,entry.text);label.font=WM2SettingsFont(label,true);textLayout.addWidget(label);
+            var detailLabel=null;if(entry.detail){detailLabel=WM2SettingsPlainLabel(textColumn,entry.detail);textLayout.addWidget(detailLabel);}
+            row.layout.addWidget(textColumn,1);
+            editor.rows.push({widget:row.widget,button:button,label:label,detailLabel:detailLabel,selected:false});
+            (function(index,name,selector){connect(selector,"clicked()",function(){
+                // A queued click from content replaced after Add/Remove cannot select a different row.
+                if(editor.rows[index]&&editor.rows[index].button===selector&&editor.entries[index].name===name)editor.select(index,true);
+            });})(i,entry.name,button);
+        }
+        if(!editor.entries.length)bodyLayout.addWidget(WM2SettingsPlainLabel(body,emptyText));
+        if(typeof bodyLayout.addStretch==="function")bodyLayout.addStretch(1);
+        scroll.setWidget(body);var selected=-1;
+        for(var j=0;j<editor.entries.length;j++)if(editor.entries[j].name===selectedName){selected=j;break;}
+        editor.select(selected,focus===true);
+    };
+    return editor;
+}
+function WM2SettingsVisibleFigure(name) {
+    // Keep legacy recognition and saved profiles; only their speculative editor rows are hidden.
+    return ["Genesis9_1","Genesis9.1","Genesis10","Genesis10Female","Genesis10Male"].indexOf(name)<0;
+}
 function WM2SettingsIcons(resourcePath) {
     var directory = new DzDir(resourcePath), entries = [], result = [];
     try { entries = directory.entryList(["*.png","*.PNG"], DzDir.Files, DzDir.Name); }
@@ -372,19 +424,19 @@ function WM2ShowProtectedChildren(resourcePath, config, figureName) {
     var support=WM2Support,children=support.protectedChildNames(config,figureName),ui=WM2SettingsDialog("Protected Children: "+figureName,resourcePath),dialog=ui.dialog,content=ui.content,layout=ui.layout,metrics=ui.metrics;
     layout.addWidget(WM2SettingsHeading(content,"Protected Children: "+figureName,"#FA8072"));
     layout.addWidget(WM2SettingsPlainLabel(content,"Select attached children in Scene, then Add Selected Children. Select this supported figure or one of its own bones to add every current attachment missing from the list. Intrinsic bones always stay attached and need no list entry; attached props and figures, including Tail and children beneath bones, are eligible. Protection uses actual internal child names and applies to every instance of this figure type. Protected subtrees and their carrying ancestors stay attached. Remove Protection allows selected list entries to move; automatic graft safety still applies. Save updates the parent draft; Save there writes settings."));
-    var list=new DzListBox(content),status=WM2SettingsPlainLabel(content,"");
-    list.selectionMode=DzListBox.Single;list.minHeight=metrics.listHeight;layout.addWidget(list,1);
+    var status=WM2SettingsPlainLabel(content,""),list=WM2SettingsEditorRows(content,layout,resourcePath,"No protected children. Select attached items in Scene, then Add Selected Children.",function(index){remove.enabled=index>=0&&index<children.length;});
     var actions=WM2SettingsRow(content,layout),add=WM2SettingsButton(actions.widget,"Add Selected Children",resourcePath,"Wearables Manager - Group.png"),remove=WM2SettingsButton(actions.widget,"Remove Protection",resourcePath,"Wearables Manager - Cancel.png");
     actions.layout.addWidget(add);actions.layout.addWidget(remove);layout.addWidget(status);
     function say(message){status.text=String(message);}
-    function populate(){list.clear();for(var i=0;i<children.length;i++)list.insertItem(children[i]);list.currentItem=-1;remove.enabled=false;}
-    connect(list,"selectionChanged(int)",function(index){remove.enabled=Number(index)>=0&&Number(index)<children.length;});
+    function populate(selectedName,focus){var entries=[];for(var i=0;i<children.length;i++)entries.push({name:children[i],text:children[i],detail:""});list.populate(entries,selectedName,focus);}
     connect(add,"clicked()",function(){try{
         var base=support.setProtectedChildNames(config,figureName,children);if(!base.ok){say(base.message);return;}
         var result=support.addSelectedProtectedChildren(base.config,figureName,Scene);if(!result.ok){say(result.message);return;}
-        children=result.children.slice(0);populate();say(result.message+" Save updates this draft.");
+        var selectedName=list.currentItem>=0?list.entries[list.currentItem].name:null;
+        if(!selectedName)for(var i=0;i<result.children.length;i++)if(children.indexOf(result.children[i])<0){selectedName=result.children[i];break;}
+        children=result.children.slice(0);populate(selectedName,true);say(result.message+" Save updates this draft.");
     }catch(e){say(String(e));}});
-    connect(remove,"clicked()",function(){var index=Number(list.currentItem);if(index<0||index>=children.length)return;var child=children.splice(index,1)[0];populate();say("Removed protection for "+child+" in this draft.");});
+    connect(remove,"clicked()",function(){var index=Number(list.currentItem);if(index<0||index>=children.length)return;var child=children.splice(index,1)[0];populate(children.length?children[Math.min(index,children.length-1)]:null,true);if(!children.length)try{add.getWidget().setFocus();}catch(e){}say("Removed protection for "+child+" in this draft.");});
     populate();say("Select children, their supported figure or one of its bones, then Add Selected Children. Missing names are added only on this explicit action; Save applies the draft.");
     try{while(dialog.exec()){var result=support.setProtectedChildNames(config,figureName,children);if(result.ok)return {saved:true,config:result.config};say(result.message);}return {saved:false};}
     finally{dialog.deleteLater();}
@@ -393,15 +445,15 @@ function WM2ShowSupportedFigures(resourcePath) {
     var support=WM2Support,model=WM2SettingsModel(support,resourcePath,""),ui=WM2SettingsDialog("Wearables Manager - Supported Figures",resourcePath),dialog=ui.dialog,content=ui.content,layout=ui.layout,metrics=ui.metrics;
     layout.addWidget(WM2SettingsHeading(content,"Supported Figures","#FA8072"));
     layout.addWidget(WM2SettingsPlainLabel(content,"The registry uses exact internal figure names, not labels. Select an independent figure or one of its bones, then Add Selected Figure. A new registry entry adds every current nonbone attachment, including clothing, Tail and children beneath bones, to any retained profile. Intrinsic bones always stay attached. Already registered customized profiles stay unchanged; Protected Children can explicitly fill missing names or allow movable items. Figure choices apply on the next run; saved protection also applies to an open transfer dialog."));
-    var defaults=support.defaults().supportedFigures,list=new DzListBox(content),status=WM2SettingsPlainLabel(content,"");list.selectionMode=DzListBox.Single;list.minHeight=metrics.listHeight;layout.addWidget(list,1);
+    var defaults=support.defaults().supportedFigures,status=WM2SettingsPlainLabel(content,""),list=WM2SettingsEditorRows(content,layout,resourcePath,"No visible supported figures. Select a figure in Scene, then Add Selected Figure.",function(index){remove.enabled=protect.enabled=model.editable&&index>=0&&index<list.entries.length;});
     var actions=WM2SettingsRow(content,layout),add=WM2SettingsButton(actions.widget,"Add Selected Figure",resourcePath,"Wearables Manager - Prop.png"),remove=WM2SettingsButton(actions.widget,"Remove",resourcePath,"Wearables Manager - Cancel.png"),reset=WM2SettingsButton(actions.widget,"Reset Genesis Defaults",resourcePath,"Wearables Manager - Group.png"),protect=WM2SettingsButton(actions.widget,"Protected Children...",resourcePath,"Wearables Manager - Ok.png");actions.layout.addWidget(add);actions.layout.addWidget(remove);actions.layout.addWidget(reset);actions.layout.addWidget(protect);layout.addWidget(status);
     function say(text){status.text=String(text);}
-    function populate(){list.clear();for(var i=0;i<model.config.supportedFigures.length;i++){var name=model.config.supportedFigures[i];list.insertItem(name+(defaults.indexOf(name)>=0?" [Genesis default]":" [custom figure]")+" | protected children: "+support.protectedChildNames(model.config,name).length);list.setSelected(i,false);}list.currentItem=-1;remove.enabled=false;protect.enabled=false;}
-    connect(list,"selectionChanged(int)",function(index){remove.enabled=protect.enabled=model.editable&&Number(index)>=0&&Number(index)<model.config.supportedFigures.length;});
-    connect(add,"clicked()",function(){try{var result=support.addSupportedFigure(model.config,Scene.getPrimarySelection());if(!result.ok){say(result.message);return;}model.config=support.clone(result.config);populate();say("Internal name: "+support.figureInternalName(result.figure)+" | Visible label: "+support.iconNodeLabel(result.figure)+". "+result.message+" Save to apply.");}catch(e){say(String(e));}});
-    connect(protect,"clicked()",function(){try{var index=Number(list.currentItem);if(index<0||index>=model.config.supportedFigures.length)return;var result=WM2ShowProtectedChildren(resourcePath,model.config,model.config.supportedFigures[index]);if(result.saved){model.config=support.clone(result.config);populate();say("Protected children updated in this draft. Save to apply.");}}catch(e){say(String(e));}});
-    connect(remove,"clicked()",function(){var index=Number(list.currentItem);if(index<0||index>=model.config.supportedFigures.length){say("Select a registry entry to remove.");return;}var removed=model.config.supportedFigures[index];model.config.supportedFigures.splice(index,1);populate();say("Removed "+removed+" from this draft. Save to apply on the next run.");});
-    connect(reset,"clicked()",function(){model.config=WM2SettingsResetGenesis(support,model.config);populate();say("Genesis defaults restored; custom entries kept. Save to apply on the next run.");});
+    function populate(selectedName,focus){var entries=[];for(var i=0;i<model.config.supportedFigures.length;i++){var name=model.config.supportedFigures[i];if(WM2SettingsVisibleFigure(name))entries.push({name:name,text:name,detail:(defaults.indexOf(name)>=0?"Genesis default":"Custom figure")+" | protected children: "+support.protectedChildNames(model.config,name).length});}list.populate(entries,selectedName,focus);}
+    function selectedName(){var index=Number(list.currentItem);return index>=0&&index<list.entries.length?list.entries[index].name:null;}
+    connect(add,"clicked()",function(){if(!model.editable)return;try{var result=support.addSupportedFigure(model.config,Scene.getPrimarySelection());if(!result.ok){say(result.message);return;}model.config=support.clone(result.config);populate(support.figureInternalName(result.figure),true);say("Internal name: "+support.figureInternalName(result.figure)+" | Visible label: "+support.iconNodeLabel(result.figure)+". "+result.message+" Save to apply.");}catch(e){say(String(e));}});
+    connect(protect,"clicked()",function(){if(!model.editable)return;try{var name=selectedName();if(!name||model.config.supportedFigures.indexOf(name)<0)return;var result=WM2ShowProtectedChildren(resourcePath,model.config,name);if(result.saved){model.config=support.clone(result.config);populate(name,true);say("Protected children updated in this draft. Save to apply.");}}catch(e){say(String(e));}});
+    connect(remove,"clicked()",function(){if(!model.editable)return;var removed=selectedName(),index=model.config.supportedFigures.indexOf(removed),visibleIndex=list.currentItem;if(index<0){say("Select a registry entry to remove.");return;}model.config.supportedFigures.splice(index,1);populate(null);if(list.entries.length)list.select(Math.min(visibleIndex,list.entries.length-1),true);else try{add.getWidget().setFocus();}catch(e){}say("Removed "+removed+" from this draft. Save to apply on the next run.");});
+    connect(reset,"clicked()",function(){if(!model.editable)return;model.config=WM2SettingsResetGenesis(support,model.config);populate();say("Genesis defaults restored; custom entries kept. Save to apply on the next run.");});
     add.enabled=model.editable;reset.enabled=model.editable;dialog.setAcceptButtonEnabled(model.editable);ui.saveButton.enabled=model.editable;populate();say(model.message||("Settings: "+model.status+"."));
     try { while(dialog.exec()){try{var saved=model.save();if(saved.ok)return {saved:true,config:support.clone(model.config),message:saved.message};say(saved.message);}catch(e){say(String(e));}}return {saved:false}; }
     finally { dialog.deleteLater(); }

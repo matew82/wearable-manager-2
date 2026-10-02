@@ -43,6 +43,10 @@ A missing or unreadable configured PNG uses WM2's existing automatic icon choice
 
 Fresh settings start with ten known Genesis internal names, through Genesis9. The four additional compatibility names in the supplied scripts (Genesis9_1 and Genesis10 variants) are no longer fresh defaults. Existing saved names remain intact. Select a custom independent figure or one of its bones and choose **Add Selected Figure**. A bone resolves to its owning figure. The editor shows **Internal name** separately from **Visible label**. Fitted wearables, props, groups and figures attached under another skeleton cannot be registered as independent owners.
 
+Supported Figures and Protected Children use the same scrollable rows with larger plain-text names and a selection icon on the left. Click the icon to highlight the current editor entry, then use Remove or Protected Children. This selects only the editor row. The row stays visible and receives keyboard focus; additions and child edits retain the selected name, and removal selects a neighboring row or focuses Add when the container becomes empty.
+
+The speculative `Genesis9_1`, `Genesis9.1`, `Genesis10`, `Genesis10Female` and `Genesis10Male` entries are hidden from the visible figure editor. Existing saved registry entries and their protected-child profiles remain intact for compatibility. Other custom names remain visible. Installation does not rewrite settings.
+
 Entries use exact internal names, so changing a label does not change recognition. Remove edits the draft registry. **Reset Genesis Defaults** adds missing Genesis entries while retaining custom entries.
 
 When Menu cannot resolve a supported owner from the selected object, it offers the figure editor before opening its transfer dialog. Opening setup does not register or move anything: choose an eligible independent figure or bone, use **Add Selected Figure**, review child protection, then **Save**. A prop or group can reach setup but cannot itself be registered. Full, Take Off and Put On offer setup for an unsupported selected independent figure or bone. With no selection, select a figure first or use the separate editor.

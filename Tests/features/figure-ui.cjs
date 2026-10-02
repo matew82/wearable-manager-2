@@ -73,6 +73,28 @@ function click(environment, text) {
     assert(button.enabled, 'Button is disabled: ' + text);
     button.signals['clicked()'][0]();
 }
+function active(widget) {
+    for (let current = widget; current; current = current.parent) if (current.deleted) return false;
+    return true;
+}
+function editor(environment) {
+    const matches = environment.g.widgets.filter(widget => widget.kind === 'DzScrollArea' && widget.wm2EditorRows && active(widget));
+    assert(matches.length, 'Missing active styled editor rows');
+    return matches[matches.length - 1].wm2EditorRows;
+}
+function editorNames(environment) { return plain(editor(environment).entries).map(entry => entry.name); }
+function clickEditorRow(environment, index) {
+    const list = editor(environment), row = list.rows[index];
+    assert(row && row.button, 'Missing editor row ' + index);
+    assert.equal(row.button.wm2RowIndex, index); assert.equal(row.button.wm2RowName, list.entries[index].name);
+    assert(row.button.enabled, 'Editor row button is disabled');
+    const callbacks = row.button.signals['clicked()'] || [];
+    assert.equal(callbacks.length, 1, 'Row has one selection callback'); callbacks[0]();
+    assert.equal(list.currentItem, index, 'Actual row click selects its entry');
+    assert.equal(environment.g.focusedWidget, row.button, 'Actual row click focuses its button');
+    assert.equal(list.scroll.visibilityRequests[list.scroll.visibilityRequests.length - 1], row.widget, 'Actual row click reveals the selected row');
+    return row;
+}
 function childDialog(environment, value, figureName = 'Custom') {
     return environment.context.WM2ShowProtectedChildren('C:/scratch/Resources', value, figureName);
 }
@@ -175,7 +197,7 @@ test('current Scene selection is reread on each click after dialog construction'
     const graph = graphFixture(), figure = graph.figure(), a = graph.add('A', 'DzNode', figure), b = graph.add('B', 'DzNode', figure), environment = graph.environment(config(), [a]);
     environment.g.steps = [() => {
         environment.g.setSelection([b]); click(environment, 'Add Selected Children');
-        assert.deepEqual(plain(last(environment, 'DzListBox').items), ['Existing', 'B']);
+        assert.deepEqual(editorNames(environment), ['Existing', 'B']);
         environment.g.setSelection([a]); click(environment, 'Add Selected Children'); return true;
     }];
     assert.deepEqual(plain(childDialog(environment, config()).config.protectedChildren[0].children), ['Existing', 'B', 'A']); noSceneWrites(environment);
@@ -183,7 +205,7 @@ test('current Scene selection is reread on each click after dialog construction'
 test('removal is preserved when a different selected child is subsequently added', () => {
     const graph = graphFixture(), figure = graph.figure(), hat = graph.add('Hat', 'DzNode', figure), environment = graph.environment(config(), [hat]);
     environment.g.steps = [() => {
-        last(environment, 'DzListBox').setSelected(0, true); click(environment, 'Remove Protection');
+        clickEditorRow(environment, 0); click(environment, 'Remove Protection');
         click(environment, 'Add Selected Children'); return true;
     }];
     assert.deepEqual(plain(childDialog(environment, config()).config.protectedChildren[0].children), ['Hat']); noSceneWrites(environment);
@@ -191,8 +213,8 @@ test('removal is preserved when a different selected child is subsequently added
 test('Add then Remove then Save does not re-add currently selected protection', () => {
     const graph = graphFixture(), figure = graph.figure(), hat = graph.add('Hat', 'DzNode', figure), value = config(), environment = graph.environment(value, [hat]);
     environment.g.steps = [() => {
-        click(environment, 'Add Selected Children'); const list = last(environment, 'DzListBox');
-        list.setSelected(list.items.indexOf('Hat'), true); click(environment, 'Remove Protection'); return true;
+        click(environment, 'Add Selected Children');
+        clickEditorRow(environment, editorNames(environment).indexOf('Hat')); click(environment, 'Remove Protection'); return true;
     }];
     assert.deepEqual(plain(childDialog(environment, value).config), value); noSceneWrites(environment);
 });
@@ -200,7 +222,7 @@ test('invalid selection shows a reason and Save cannot apply a partial draft', (
     const graph = graphFixture(), figure = graph.figure(), hat = graph.add('Hat', 'DzNode', figure), stale = graph.add('Gone', 'DzNode', figure), environment = graph.environment(config(), [hat, stale]);
     environment.g.nodes = environment.g.nodes.filter(node => node !== stale);
     environment.g.steps = [() => {
-        click(environment, 'Add Selected Children'); assert.deepEqual(plain(last(environment, 'DzListBox').items), ['Existing']);
+        click(environment, 'Add Selected Children'); assert.deepEqual(editorNames(environment), ['Existing']);
         assert(environment.g.widgets.some(widget => widget.kind === 'DzLabel' && widget.text.includes('unavailable'))); return true;
     }];
     assert.deepEqual(plain(childDialog(environment, config()).config), config()); noSceneWrites(environment);
@@ -209,7 +231,7 @@ for (const action of ['add', 'remove']) test('child Cancel discards ' + action +
     const graph = graphFixture(), figure = graph.figure(), hat = graph.add('Hat', 'DzNode', figure), value = config(), before = plain(value), environment = graph.environment(value, [hat]);
     environment.g.steps = [() => {
         if (action === 'add') click(environment, 'Add Selected Children');
-        else { last(environment, 'DzListBox').setSelected(0, true); click(environment, 'Remove Protection'); }
+        else { clickEditorRow(environment, 0); click(environment, 'Remove Protection'); }
         return false;
     }];
     assert.equal(childDialog(environment, value).saved, false); assert.deepEqual(value, before); assert.equal(environment.g.saved.length, 0); noSceneWrites(environment);
@@ -217,7 +239,7 @@ for (const action of ['add', 'remove']) test('child Cancel discards ' + action +
 for (const saveParent of [false, true]) test('parent ' + (saveParent ? 'Save commits' : 'Cancel discards') + ' accepted child draft', () => {
     const graph = graphFixture(), figure = graph.figure(), hat = graph.add('Hat', 'DzNode', figure), value = config(), before = plain(value), environment = graph.environment(value, [hat]);
     environment.g.steps = [
-        () => { last(environment, 'DzListBox').setSelected(0, true); click(environment, 'Protected Children...'); return saveParent; },
+        () => { clickEditorRow(environment, 0); click(environment, 'Protected Children...'); return saveParent; },
         () => { click(environment, 'Add Selected Children'); return true; }
     ];
     assert.equal(environment.context.WM2ShowSupportedFigures('C:/scratch/Resources').saved, saveParent);
@@ -232,11 +254,10 @@ for (const saveParent of [false, true]) test('parent ' + (saveParent ? 'Save com
 test('failed parent Save retains protected draft before Cancel', () => {
     const graph = graphFixture(), figure = graph.figure(), hat = graph.add('Hat', 'DzNode', figure), value = config(), environment = ui.environment({config: value, nodes: graph.nodes, selected: hat, saveFailure: true});
     environment.g.steps = [
-        () => { last(environment, 'DzListBox').setSelected(0, true); click(environment, 'Protected Children...'); return true; },
+        () => { clickEditorRow(environment, 0); click(environment, 'Protected Children...'); return true; },
         () => { click(environment, 'Add Selected Children'); return true; },
         () => {
-            const lists = environment.g.widgets.filter(widget => widget.kind === 'DzListBox');
-            assert(lists[0].items[0].includes('protected children: 2'));
+            assert(editor(environment).entries[0].detail.includes('protected children: 2'));
             assert(environment.g.widgets.some(widget => widget.kind === 'DzLabel' && widget.text === 'Forced save failure')); return false;
         }
     ];
@@ -247,7 +268,7 @@ test('failed parent Save retains protected draft before Cancel', () => {
 for (const status of ['future-schema', 'unreadable', 'path-error']) test(status + ' disables all figure edits and Save', () => {
     const environment = ui.environment({config: config(), status, readOnly: true});
     environment.g.steps = [(_, dialog) => {
-        last(environment, 'DzListBox').setSelected(0, true);
+        clickEditorRow(environment, 0);
         for (const text of ['Protected Children...', 'Remove', 'Add Selected Figure', 'Reset Genesis Defaults']) assert.equal(environment.button(text).enabled, false);
         assert.equal(dialog.acceptButton.enabled, false); return false;
     }];
@@ -260,7 +281,7 @@ for (const useBone of [false, true]) test('actual getName identity displayed and
     const value = config(); value.supportedFigures = []; value.protectedChildren = [];
     const environment = graph.environment(value, [useBone ? bone : figure]);
     environment.g.steps = [() => {
-        click(environment, 'Add Selected Figure'); assert(last(environment, 'DzListBox').items[0].startsWith('ActualInternal '));
+        click(environment, 'Add Selected Figure'); assert.equal(editor(environment).entries[0].text, 'ActualInternal');
         assert(environment.status().text.includes('Internal name: ActualInternal | Visible label: Different visible label')); return true;
     }];
     assert(environment.context.WM2ShowSupportedFigures('C:/scratch/Resources').saved);
@@ -391,16 +412,17 @@ test('individual nested Tail selection does not implicitly protect its siblings 
 for (const selectedBone of [false, true]) test('Horse child editor expands ' + (selectedBone ? 'bone' : 'figure') + ' only on explicit bulk Add after removal', () => {
     const horse = horseFixture(), value = horseConfig(['DAZHorse2Tail']), environment = horse.graph.environment(value, [selectedBone ? horse.hip : horse.figure]);
     environment.g.steps = [() => {
-        last(environment, 'DzListBox').setSelected(0, true); click(environment, 'Remove Protection');
-        assert.deepEqual(plain(last(environment, 'DzListBox').items), []);
-        click(environment, 'Add Selected Children'); assert.deepEqual(plain(last(environment, 'DzListBox').items).sort(), horse.names.slice().sort()); return true;
+        clickEditorRow(environment, 0); click(environment, 'Remove Protection');
+        assert.deepEqual(editorNames(environment), []);
+        assert.equal(environment.g.focusedWidget, environment.button('Add Selected Children'));
+        click(environment, 'Add Selected Children'); assert.deepEqual(editorNames(environment).sort(), horse.names.slice().sort()); return true;
     }];
     const result = childDialog(environment, value, 'DAZHorse2'); assert(result.saved);
     assert.deepEqual(plain(result.config.protectedChildren[0].children).sort(), horse.names.slice().sort()); assert.equal(environment.g.saved.length, 0); noSceneWrites(environment);
 });
 test('selected Horse figure does not refill a removal on Save without explicit Add', () => {
     const horse = horseFixture(), value = horseConfig(['DAZHorse2Tail']), environment = horse.graph.environment(value, [horse.figure]);
-    environment.g.steps = [() => { last(environment, 'DzListBox').setSelected(0, true); click(environment, 'Remove Protection'); return true; }];
+    environment.g.steps = [() => { clickEditorRow(environment, 0); click(environment, 'Remove Protection'); return true; }];
     assert.deepEqual(plain(childDialog(environment, value, 'DAZHorse2').config.protectedChildren[0].children), []); noSceneWrites(environment);
 });
 for (const fault of ['missing membership', 'duplicate membership', 'stale child', 'changed child parent']) test('Horse owner expansion ' + fault + ' rejects the entire mixed batch', () => {
@@ -443,6 +465,176 @@ for (const field of ['supportedFigures', 'protectedChildren', 'children']) test(
 test('unknown root fields are rejected rather than silently dropped', () => {
     const value = config(); value.unexpected = {preserve: true};
     assert.equal(io.fixture().support.validate(value).ok, false);
+});
+
+const hiddenFigureNames = ['Genesis9_1', 'Genesis9.1', 'Genesis10', 'Genesis10Female', 'Genesis10Male'];
+function registry(names) {
+    const value = config(); value.supportedFigures = names.slice();
+    value.protectedChildren = names.map(name => ({figure: name, children: ['Protected_' + name]}));
+    return value;
+}
+function rowStructure(environment, list) {
+    for (let index = 0; index < list.rows.length; index++) {
+        const row = list.rows[index], entry = list.entries[index];
+        assert.equal(row.widget.kind, 'DzWidget'); assert.equal(row.button.kind, 'DzPushButton'); assert.equal(row.label.kind, 'DzLabel');
+        assert.equal(row.button.wm2RowName, entry.name); assert.equal(row.button.wm2RowIndex, index);
+        assert.equal(row.label.text, entry.text); assert.equal(row.label.textFormat, environment.context.DzLabel.PlainText);
+        assert(row.label.font.bold); assert(row.label.font.pointSize >= 16);
+        assert(environment.g.widgets.indexOf(row.button) < environment.g.widgets.indexOf(row.label), 'Left selection button is created before the large label');
+        const rowWidgets = row.widget.wm2TestLayout.children.filter(item => item.widget).map(item => item.widget);
+        assert.equal(rowWidgets[0], row.button, 'The row layout places the selection button first');
+        assert.equal(rowWidgets[1], row.label.parent, 'The text column follows the left button');
+        assert.equal(row.selected, index === list.currentItem);
+        if (entry.detail) { assert.equal(row.detailLabel.text, entry.detail); assert.equal(row.detailLabel.textFormat, environment.context.DzLabel.PlainText); }
+    }
+}
+test('figure and protected-child containers use the same large plain row structure', () => {
+    const environment = ui.environment({config: config()}), signatures = [];
+    environment.g.steps = [
+        () => {
+            const list = editor(environment); rowStructure(environment, list);
+            assert.deepEqual(plain(list.entries), [{name: 'Custom', text: 'Custom', detail: 'Custom figure | protected children: 1'}]);
+            assert.equal(environment.g.widgets.filter(widget => widget.kind === 'DzListBox').length, 0);
+            signatures.push([list.rows[0].button.kind, list.rows[0].label.kind, list.rows[0].label.font.family, list.rows[0].label.font.pointSize, list.rows[0].label.font.bold]);
+            clickEditorRow(environment, 0); click(environment, 'Protected Children...'); return false;
+        },
+        () => {
+            const list = editor(environment); rowStructure(environment, list); assert.deepEqual(editorNames(environment), ['Existing']);
+            signatures.push([list.rows[0].button.kind, list.rows[0].label.kind, list.rows[0].label.font.family, list.rows[0].label.font.pointSize, list.rows[0].label.font.bold]);
+            assert.equal(environment.g.widgets.filter(widget => widget.kind === 'DzListBox').length, 0); return false;
+        }
+    ];
+    assert.equal(environment.context.WM2ShowSupportedFigures('C:/scratch/Resources').saved, false);
+    assert.deepEqual(signatures[0], signatures[1]); noSceneWrites(environment);
+});
+for (const child of [false, true]) test((child ? 'child' : 'figure') + ' row clicks highlight exactly one row and enable actions without Scene reads', () => {
+    const value = registry(['First', 'Second']), environment = ui.environment({config: value});
+    value.protectedChildren[0].children = ['A', 'B'];
+    environment.g.steps = [() => {
+        const list = editor(environment), action = child ? 'Remove Protection' : 'Remove';
+        assert.equal(environment.button(action).enabled, false); assert.equal(list.currentItem, -1);
+        const reads = environment.g.sceneReads, initialCSS = list.rows[0].widget.getWidget().styleSheet;
+        clickEditorRow(environment, 0); assert(list.rows[0].selected); assert(!list.rows[1].selected);
+        assert.equal(environment.button(action).enabled, true); assert.notEqual(list.rows[0].widget.getWidget().styleSheet, initialCSS);
+        clickEditorRow(environment, 1); assert(!list.rows[0].selected); assert(list.rows[1].selected);
+        assert.equal(environment.g.sceneReads, reads); assert.equal(environment.g.selected, null); rowStructure(environment, list); return false;
+    }];
+    if (child) assert.equal(childDialog(environment, value, 'First').saved, false);
+    else assert.equal(environment.context.WM2ShowSupportedFigures('C:/scratch/Resources').saved, false);
+    noSceneWrites(environment);
+});
+test('only the five exact placeholder names are hidden and explicit Save preserves their profiles', () => {
+    const names = ['Genesis9', ...hiddenFigureNames, 'Genesis10Dragon', 'Genesis9_10', 'Genesis9.10', 'genesis10'], value = registry(names), before = plain(value), environment = ui.environment({config: value});
+    environment.g.steps = [() => {
+        assert.deepEqual(editorNames(environment), ['Genesis9', 'Genesis10Dragon', 'Genesis9_10', 'Genesis9.10', 'genesis10']);
+        assert.equal(editor(environment).entries[0].detail, 'Genesis default | protected children: 1'); rowStructure(environment, editor(environment)); return true;
+    }];
+    assert(environment.context.WM2ShowSupportedFigures('C:/scratch/Resources').saved);
+    assert.deepEqual(plain(environment.g.saved[0].config), before); assert.deepEqual(value, before); noSceneWrites(environment);
+});
+for (const names of [['Genesis10', 'First', 'Second'], ['First', 'Genesis10Female', 'Second', 'Genesis9_1']]) test('visible Remove resolves the entry name after hidden entries ' + JSON.stringify(names), () => {
+    const value = registry(names), before = plain(value), environment = ui.environment({config: value});
+    environment.g.steps = [() => {
+        assert.deepEqual(editorNames(environment), ['First', 'Second']); clickEditorRow(environment, 1); click(environment, 'Remove');
+        const list = editor(environment);
+        assert.deepEqual(editorNames(environment), ['First']); assert.equal(list.entries[list.currentItem].name, 'First');
+        assert.equal(environment.g.focusedWidget, list.rows[list.currentItem].button);
+        assert.equal(list.scroll.visibilityRequests[list.scroll.visibilityRequests.length - 1], list.rows[list.currentItem].widget); return true;
+    }];
+    assert(environment.context.WM2ShowSupportedFigures('C:/scratch/Resources').saved);
+    const saved = plain(environment.g.saved[0].config);
+    assert.deepEqual(saved.supportedFigures, names.filter(name => name !== 'Second')); assert.deepEqual(saved.protectedChildren, before.protectedChildren);
+    assert.deepEqual(value, before); noSceneWrites(environment);
+});
+for (const names of [['Genesis10', 'First', 'Second'], ['First', 'Genesis9.1', 'Second']]) test('Protected Children resolves the selected visible name after hidden entries ' + JSON.stringify(names), () => {
+    const value = registry(names), environment = ui.environment({config: value});
+    environment.g.steps = [
+        () => { clickEditorRow(environment, 1); click(environment, 'Protected Children...'); const list = editor(environment); assert.equal(list.entries[list.currentItem].name, 'Second'); assert.equal(environment.g.focusedWidget, list.rows[list.currentItem].button); return true; },
+        (_, dialog) => { assert.equal(dialog.caption, 'Protected Children: Second'); assert.deepEqual(editorNames(environment), ['Protected_Second']); clickEditorRow(environment, 0); click(environment, 'Remove Protection'); return true; }
+    ];
+    assert(environment.context.WM2ShowSupportedFigures('C:/scratch/Resources').saved);
+    const saved = plain(environment.g.saved[0].config); assert.deepEqual(saved.supportedFigures, names);
+    assert.deepEqual(saved.protectedChildren, names.map(name => ({figure: name, children: name === 'Second' ? [] : ['Protected_' + name]}))); noSceneWrites(environment);
+});
+test('Cancel discards visible removals and retains hidden entries and every profile', () => {
+    const value = registry(['Genesis9_1', 'Custom', 'Genesis10Dragon', 'Genesis10Male']), before = plain(value), environment = ui.environment({config: value});
+    environment.g.steps = [() => { clickEditorRow(environment, 0); click(environment, 'Remove'); assert.deepEqual(editorNames(environment), ['Genesis10Dragon']); return false; }];
+    assert.equal(environment.context.WM2ShowSupportedFigures('C:/scratch/Resources').saved, false);
+    assert.deepEqual(value, before); assert.equal(environment.g.saved.length, 0); noSceneWrites(environment);
+});
+test('all-hidden registry has an empty visible container and Save preserves the complete registry', () => {
+    const value = registry(hiddenFigureNames), environment = ui.environment({config: value});
+    environment.g.steps = [() => { assert.deepEqual(editorNames(environment), []); assert.equal(editor(environment).currentItem, -1); assert.equal(environment.button('Remove').enabled, false); assert.equal(environment.button('Protected Children...').enabled, false); return true; }];
+    assert(environment.context.WM2ShowSupportedFigures('C:/scratch/Resources').saved); assert.deepEqual(plain(environment.g.saved[0].config), value); noSceneWrites(environment);
+});
+for (const child of [false, true]) test('stale ' + (child ? 'child' : 'figure') + ' row button cannot change selection after removal/repopulation', () => {
+    const value = registry(['First', 'Second', 'Third']); value.protectedChildren[0].children = ['A', 'B', 'C'];
+    const environment = ui.environment({config: value});
+    environment.g.steps = [() => {
+        const list = editor(environment), old = list.rows[0].button; clickEditorRow(environment, 0); click(environment, child ? 'Remove Protection' : 'Remove');
+        assert.deepEqual(editorNames(environment), child ? ['B', 'C'] : ['Second', 'Third']);
+        const current = list.currentItem, name = list.entries[current].name;
+        assert.equal(environment.g.focusedWidget, list.rows[current].button);
+        assert.equal(list.scroll.visibilityRequests[list.scroll.visibilityRequests.length - 1], list.rows[current].widget); old.signals['clicked()'][0]();
+        assert.equal(list.currentItem, current); assert.equal(list.entries[list.currentItem].name, name); rowStructure(environment, list); return false;
+    }];
+    if (child) assert.equal(childDialog(environment, value, 'First').saved, false);
+    else assert.equal(environment.context.WM2ShowSupportedFigures('C:/scratch/Resources').saved, false);
+    noSceneWrites(environment);
+});
+test('empty registry Add selects the exact new row and Remove returns to empty without deleting its profile', () => {
+    const graph = graphFixture(), figure = graph.figure('NewFigure'); graph.add('Tail', 'DzNode', figure);
+    const value = registry([]), environment = graph.environment(value, [figure]);
+    environment.g.steps = [() => {
+        assert.deepEqual(editorNames(environment), []); click(environment, 'Add Selected Figure');
+        assert.deepEqual(editorNames(environment), ['NewFigure']); assert.equal(editor(environment).currentItem, 0); assert(editor(environment).rows[0].selected);
+        assert.equal(environment.g.focusedWidget, editor(environment).rows[0].button);
+        assert.equal(environment.button('Remove').enabled, true); click(environment, 'Remove');
+        assert.deepEqual(editorNames(environment), []); assert.equal(editor(environment).currentItem, -1); assert.equal(environment.button('Remove').enabled, false);
+        assert.equal(environment.g.focusedWidget, environment.button('Add Selected Figure')); return true;
+    }];
+    assert(environment.context.WM2ShowSupportedFigures('C:/scratch/Resources').saved);
+    assert.deepEqual(plain(environment.g.saved[0].config.supportedFigures), []); assert.deepEqual(plain(environment.g.saved[0].config.protectedChildren), [{figure: 'NewFigure', children: ['Tail']}]); noSceneWrites(environment);
+});
+for (const existingSelection of [false, true]) test('child Add ' + (existingSelection ? 'preserves the exact selected name' : 'selects the first newly added name'), () => {
+    const graph = graphFixture(), figure = graph.figure(), hat = graph.add('Hat', 'DzNode', figure), environment = graph.environment(config(), [hat]);
+    environment.g.steps = [() => {
+        if (existingSelection) clickEditorRow(environment, 0);
+        click(environment, 'Add Selected Children'); const list = editor(environment);
+        assert.equal(list.entries[list.currentItem].name, existingSelection ? 'Existing' : 'Hat');
+        assert.equal(environment.g.focusedWidget, list.rows[list.currentItem].button);
+        assert.equal(list.scroll.visibilityRequests[list.scroll.visibilityRequests.length - 1], list.rows[list.currentItem].widget); rowStructure(environment, list); return true;
+    }];
+    assert(childDialog(environment, config()).saved); noSceneWrites(environment);
+});
+test('row labels preserve literal markup-like internal names as plain text', () => {
+    const name = 'Figure<tag>&', child = 'Tail<tag>&', value = registry([name]), environment = ui.environment({config: value});
+    value.protectedChildren[0].children = [child]; environment.g.steps = [
+        () => { assert.equal(editor(environment).rows[0].label.text, name); rowStructure(environment, editor(environment)); clickEditorRow(environment, 0); click(environment, 'Protected Children...'); return false; },
+        () => { assert.equal(editor(environment).rows[0].label.text, child); rowStructure(environment, editor(environment)); return false; }
+    ];
+    assert.equal(environment.context.WM2ShowSupportedFigures('C:/scratch/Resources').saved, false); noSceneWrites(environment);
+});
+for (const throwing of [false, true]) test('row arrow ' + (throwing ? 'throwing loader' : 'missing PNG') + ' retains the usable text selector', () => {
+    const environment = ui.environment({config: config(), pixmapThrows: throwing});
+    environment.g.steps = [() => {
+        const row = editor(environment).rows[0]; assert.equal(row.button.text, '>');
+        assert(!row.button.pixmap || row.button.pixmap.isNull()); clickEditorRow(environment, 0);
+        assert.equal(environment.button('Protected Children...').enabled, true); return false;
+    }];
+    assert.equal(environment.context.WM2ShowSupportedFigures('C:/scratch/Resources').saved, false); noSceneWrites(environment);
+});
+for (const throwing of [false, true]) test((throwing ? 'throwing' : 'missing') + ' optional focus/scroll APIs cannot block row selection or Save', () => {
+    const value = config(), environment = ui.environment({config: value});
+    environment.g.steps = [() => {
+        const list = editor(environment), button = list.rows[0].button;
+        list.scroll.ensureWidgetVisible = throwing ? () => { throw Error('Optional scroll API unavailable'); } : undefined;
+        button.native.setFocus = throwing ? () => { throw Error('Optional focus API unavailable'); } : undefined;
+        button.signals['clicked()'][0](); assert.equal(list.currentItem, 0); assert(list.rows[0].selected);
+        assert.equal(environment.button('Remove').enabled, true); return true;
+    }];
+    assert(environment.context.WM2ShowSupportedFigures('C:/scratch/Resources').saved);
+    assert.deepEqual(plain(environment.g.saved[0].config), value); noSceneWrites(environment);
 });
 
 const failures = tests.filter(item => !item.pass).map(({name, message, stack}) => ({name, message, stack}));
