@@ -97,6 +97,13 @@ function WM2SettingsButton(parent, text, resourcePath, iconFilename, rotateClock
     WM2SettingsCSS(button, "QPushButton { padding:5px 8px;" + (loaded ? "" : " padding-left:32px;") + " }");
     return button;
 }
+function WM2SettingsArrowButton(parent, text, resourcePath, iconFilename) {
+    var button=WM2SettingsButton(parent,"",resourcePath,iconFilename,true),side=WM2SettingsMetrics(button).buttonHeight;
+    button.text="";button.toolTip=String(text);button.sizedFromIcon=true;
+    button.minWidth=side;button.maxWidth=side;button.minHeight=side;button.maxHeight=side;
+    WM2SettingsCSS(button,"QPushButton { padding:5px; }");
+    return button;
+}
 function WM2SettingsDialog(title, resourcePath) {
     var dialog = new DzBasicDialog();
     dialog.caption = String(title); dialog.sizeGripEnabled = true;
@@ -377,9 +384,9 @@ function WM2ShowIconRules(resourcePath,getPreviewContext) {
     for(var j=0;j<icons.length;j++)icon.addItem(icons[j]);
     var actions=WM2SettingsRow(content,layout),selectionActions=WM2SettingsRow(content,layout),populating=false,selection=null,connectedSelection=false;
     var add=WM2SettingsButton(actions.widget,"Add Rule",resourcePath,"Wearables Manager - Prop.png"),update=WM2SettingsButton(actions.widget,"Update Rule",resourcePath,"Wearables Manager - Ok.png"),remove=WM2SettingsButton(actions.widget,"Remove",resourcePath,"Wearables Manager - Cancel.png"),clearDraft=WM2SettingsButton(actions.widget,"Clear Draft",resourcePath,"Wearables Manager - Empty.png");
-    var up=WM2SettingsButton(actions.widget,"Move Up",resourcePath,"Wearables Manager - Arrow Left.png",true),down=WM2SettingsButton(selectionActions.widget,"Move Down",resourcePath,"Wearables Manager - Arrow Right.png",true);
-    actions.layout.addWidget(up);actions.layout.addWidget(clearDraft);actions.layout.addWidget(add);actions.layout.addWidget(update);actions.layout.addWidget(remove);
-    var useName=WM2SettingsButton(selectionActions.widget,"Use Selected Name",resourcePath,"Wearables Manager - Prop.png"),useLabel=WM2SettingsButton(selectionActions.widget,"Use Selected Label",resourcePath,"Wearables Manager - Prop.png"),useAssetId=WM2SettingsButton(selectionActions.widget,"Use Selected AssetId",resourcePath,"Wearables Manager - Prop.png");selectionActions.layout.addWidget(down);selectionActions.layout.addWidget(useName);selectionActions.layout.addWidget(useLabel);selectionActions.layout.addWidget(useAssetId);
+    var up=WM2SettingsArrowButton(actions.widget,"Move Up",resourcePath,"Wearables Manager - Arrow Left.png"),down=WM2SettingsArrowButton(selectionActions.widget,"Move Down",resourcePath,"Wearables Manager - Arrow Right.png");
+    actions.layout.addWidget(clearDraft);actions.layout.addWidget(add);actions.layout.addWidget(update);actions.layout.addWidget(remove);actions.layout.addStretch(1);actions.layout.addWidget(up);
+    var useName=WM2SettingsButton(selectionActions.widget,"Use Selected Name",resourcePath,"Wearables Manager - Prop.png"),useLabel=WM2SettingsButton(selectionActions.widget,"Use Selected Label",resourcePath,"Wearables Manager - Prop.png"),useAssetId=WM2SettingsButton(selectionActions.widget,"Use Selected AssetId",resourcePath,"Wearables Manager - Prop.png");selectionActions.layout.addWidget(useName);selectionActions.layout.addWidget(useLabel);selectionActions.layout.addWidget(useAssetId);selectionActions.layout.addStretch(1);selectionActions.layout.addWidget(down);
     var assetValue=WM2SettingsPlainLabel(content,"");layout.addWidget(assetValue);
     var preview=new DzScrollArea(content);preview.widgetResizable=true;preview.minHeight=Math.max(180,metrics.previewHeight);layout.addWidget(preview,1);layout.addWidget(status);
     var previewWholeFigure=false,editingTarget=null,iconResolver=support.createIconResolver(resourcePath,function(){return model.config.iconRules;});

@@ -17,7 +17,7 @@ function test(name,run){try{run();tests.push({name,pass:true});}catch(error){tes
 const kinds=['exactName','nameWord','exactLabel','labelWord','exactAssetId','assetIdWord'];
 const modePNGs=['Wearables Manager - Match Exact Name.png','Wearables Manager - Match Word Name.png','Wearables Manager - Match Exact Label.png','Wearables Manager - Match Word Label.png','Wearables Manager - Match Exact AssetId.png','Wearables Manager - Match Word AssetId.png'];
 const modeOnPNGs=modePNGs.map(name=>name.replace(/\.png$/,' On.png'));
-const pngs=['A.png','B.PNG','Wearables Manager - Save.png','Wearables Manager - Cancel.png','Wearables Manager - Arrow Right.png',...modePNGs,...modeOnPNGs];
+const pngs=['A.png','B.PNG','Wearables Manager - Save.png','Wearables Manager - Cancel.png','Wearables Manager - Arrow Left.png','Wearables Manager - Arrow Right.png',...modePNGs,...modeOnPNGs];
 function rule(pattern,kind='exactLabel',icon='A.png',enabled){const value={kind,pattern,icon};if(enabled!==undefined)value.enabled=enabled;return value;}
 function config(rules=[]){const value=plain(ui.environment().support.defaults());value.iconRules=rules;return value;}
 let serial=100;
@@ -82,17 +82,34 @@ for(const metricSpacing of [8,13])test('paired mode row uses only fixed 10-pixel
   assert.equal(children[12].widget,picker.label);assert.equal(children[12].stretch,1);return false;
  }];open(e);noWrites(e);
 });
-test('Up and Down start consecutive action rows at one common left edge with no standalone moving row',()=>{
+test('square icon-only Up and Down trail consecutive action rows at one common right edge',()=>{
  const {e}=itemEnvironment([rule('Alpha'),rule('Beta')]);e.g.steps=[()=>{
   const up=e.button('Move Up'),down=e.button('Move Down'),upper=up.parent,lower=down.parent,content=upper.parent;
   assert.notEqual(upper,lower);assert.equal(lower.parent,content);assert.equal(upper.wm2TestLayout.margin,0);assert.equal(lower.wm2TestLayout.margin,0);
-  assert.deepEqual(plain(upper.wm2TestLayout.children.filter(child=>child.widget).map(child=>child.widget.text)),['Move Up','Clear Draft','Add Rule','Update Rule','Remove']);
-  assert.deepEqual(plain(lower.wm2TestLayout.children.filter(child=>child.widget).map(child=>child.widget.text)),['Move Down','Use Selected Name','Use Selected Label','Use Selected AssetId']);
+  assert.deepEqual(plain(upper.wm2TestLayout.children.filter(child=>child.widget).map(child=>child.widget.text)),['Clear Draft','Add Rule','Update Rule','Remove','']);
+  assert.deepEqual(plain(lower.wm2TestLayout.children.filter(child=>child.widget).map(child=>child.widget.text)),['Use Selected Name','Use Selected Label','Use Selected AssetId','']);
+  for(const [row,arrow,tooltip]of [[upper,up,'Move Up'],[lower,down,'Move Down']]){
+   const children=row.wm2TestLayout.children;assert.equal(children.at(-1).widget,arrow);assert.equal(children.at(-2).stretch,1);assert(!children.at(-2).widget);assert.equal(arrow.text,'');assert.equal(arrow.toolTip,tooltip);assert.equal(arrow.sizedFromIcon,true);
+   for(const dimension of ['minWidth','minHeight','maxWidth','maxHeight'])assert.equal(arrow[dimension],30);
+   assert.equal(arrow.pixmap.width,18);assert.equal(arrow.pixmap.height,18);assert.equal(arrow.getWidget().iconSize.width,18);assert.equal(arrow.getWidget().iconSize.height,18);assert.equal(arrow.pixmap.image.pixels.size,324);assert.deepEqual(plain(arrow.pixmap.image.pixel(17,0)),{x:0,y:0});assert(arrow.pixmap.image.deleted);
+  }
   const rows=content.wm2TestLayout.children.filter(child=>child.widget).map(child=>child.widget);assert.equal(rows.indexOf(lower),rows.indexOf(upper)+1);
   assert(!e.g.widgets.some(widget=>widget.kind==='DzPushButton'&&widget.text==='Preview Scene'));
   assert.equal(e.g.widgets.filter(widget=>widget.kind==='DzWidget'&&widget.wm2TestLayout&&widget.wm2TestLayout.children.some(child=>child.widget===up||child.widget===down)).length,2);
   selectRule(e,0);assert(!up.enabled);assert(down.enabled);e.click('Move Down');assert.equal(e.ruleEditor().currentItem,1);assert(up.enabled);assert(!down.enabled);e.click('Move Up');assert.equal(e.ruleEditor().currentItem,0);return false;
  }];assert.equal(open(e).saved,false);assert.equal(e.g.saved.length,0);noWrites(e);
+});
+test('larger button metrics keep both trailing arrows equally square with bounded 18-pixel rotated icons',()=>{
+ const {e}=itemEnvironment([rule('Alpha'),rule('Beta')]),metrics=e.context.WM2SettingsMetrics,loaded=[],Pixmap=e.context.Pixmap,arrowFactory=e.context.WM2SettingsArrowButton,bindings=[];
+ e.context.WM2SettingsMetrics=function(widget){const value=metrics(widget);value.buttonHeight=44;return value;};
+ e.context.Pixmap=function(file){if(typeof file==='string'&&path.basename(file).startsWith('Wearables Manager - Arrow '))loaded.push(path.basename(file));return new Pixmap(file);};
+ e.context.WM2SettingsArrowButton=function(parent,title,resourcePath,filename){const button=arrowFactory(parent,title,resourcePath,filename);bindings.push({title,filename,button});return button;};
+ e.g.steps=[()=>{
+  const up=e.button('Move Up'),down=e.button('Move Down');assert(loaded.includes('Wearables Manager - Arrow Left.png'));assert(loaded.includes('Wearables Manager - Arrow Right.png'));
+  assert.deepEqual(bindings.map(binding=>[binding.title,binding.filename]),[['Move Up','Wearables Manager - Arrow Left.png'],['Move Down','Wearables Manager - Arrow Right.png']]);assert.equal(bindings[0].button,up);assert.equal(bindings[1].button,down);
+  for(const [arrow,title]of [[up,'Move Up'],[down,'Move Down']]){assert.equal(arrow.text,'');assert.equal(arrow.toolTip,title);assert.equal(arrow.sizedFromIcon,true);for(const dimension of ['minWidth','minHeight','maxWidth','maxHeight'])assert.equal(arrow[dimension],44);assert.equal(arrow.pixmap.width,18);assert.equal(arrow.pixmap.height,18);assert.equal(arrow.getWidget().iconSize.width,18);assert.equal(arrow.getWidget().iconSize.height,18);assert.equal(arrow.pixmap.image.pixels.size,324);assert.deepEqual(plain(arrow.pixmap.image.pixel(0,17)),{x:17,y:17});}
+  selectRule(e,1);assert(up.enabled);assert(!down.enabled);e.click('Move Up');assert.equal(e.ruleEditor().currentItem,0);return false;
+ }];assert.equal(open(e).saved,false);noWrites(e);
 });
 test('clicking every mode and repeating the selected mode keeps exactly one button selected without applying settings',()=>{
  const e=environment();e.g.steps=[()=>{e.one('DzLineEdit').text='Pending';for(let i=0;i<6;i++)for(let repeat=0;repeat<2;repeat++){clickMode(e,i);assert.equal(e.modePicker().buttons.filter(button=>button.checked).length,1);assert.equal(e.modePicker().label.text,e.context.WM2SettingsKindLabel(kinds[i]));assert.equal(e.one('DzLineEdit').text,'Pending');}assert.equal(e.g.saved.length,0);return false;}];open(e);noWrites(e);
