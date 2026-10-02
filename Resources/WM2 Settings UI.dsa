@@ -327,32 +327,28 @@ function WM2NoEligibleTransfers() {
 function WM2ShowProtectedChildren(resourcePath, config, figureName) {
     var support=WM2Support,children=support.protectedChildNames(config,figureName),ui=WM2SettingsDialog("Protected Children: "+figureName,resourcePath),dialog=ui.dialog,content=ui.content,layout=ui.layout,metrics=ui.metrics;
     layout.addWidget(WM2SettingsHeading(content,"Protected Children: "+figureName,"#FA8072"));
-    layout.addWidget(WM2SettingsPlainLabel(content,"These exact internal child names stay attached, including their subtrees. An ancestor carrying any protected child also stays attached. Names apply to every instance of this figure type. Add a name manually or select a child in Scene. Removing a name explicitly allows that item to move; automatic graft safety still applies. Save updates the parent draft; Save there writes settings."));
-    var list=new DzListBox(content),row=WM2SettingsRow(content,layout),name=new DzLineEdit(row.widget),status=WM2SettingsPlainLabel(content,"");
-    list.selectionMode=DzListBox.Single;list.minHeight=metrics.listHeight;layout.addWidget(list,1);row.layout.addWidget(WM2SettingsPlainLabel(row.widget,"Child internal name"));row.layout.addWidget(name,1);
-    var actions=WM2SettingsRow(content,layout),add=WM2SettingsButton(actions.widget,"Protect Name",resourcePath,"Wearables Manager - Prop.png"),selected=WM2SettingsButton(actions.widget,"Use Selected Child",resourcePath,"Wearables Manager - Group.png"),remove=WM2SettingsButton(actions.widget,"Remove Protection",resourcePath,"Wearables Manager - Cancel.png"),reset=WM2SettingsButton(actions.widget,"Restore Genesis Protection",resourcePath,"Wearables Manager - Ok.png");
-    actions.layout.addWidget(add);actions.layout.addWidget(selected);actions.layout.addWidget(remove);actions.layout.addWidget(reset);layout.addWidget(status);
+    layout.addWidget(WM2SettingsPlainLabel(content,"Select attached children in Scene, then Add Selected Children. Bones always stay attached; children beneath bones are eligible. Protection uses actual internal child names and applies to every instance of this figure type. Protected subtrees and their carrying ancestors stay attached. Remove Protection allows selected list entries to move; automatic graft safety still applies. Save updates the parent draft; Save there writes settings."));
+    var list=new DzListBox(content),status=WM2SettingsPlainLabel(content,"");
+    list.selectionMode=DzListBox.Single;list.minHeight=metrics.listHeight;layout.addWidget(list,1);
+    var actions=WM2SettingsRow(content,layout),add=WM2SettingsButton(actions.widget,"Add Selected Children",resourcePath,"Wearables Manager - Group.png"),remove=WM2SettingsButton(actions.widget,"Remove Protection",resourcePath,"Wearables Manager - Cancel.png");
+    actions.layout.addWidget(add);actions.layout.addWidget(remove);layout.addWidget(status);
     function say(message){status.text=String(message);}
     function populate(){list.clear();for(var i=0;i<children.length;i++)list.insertItem(children[i]);list.currentItem=-1;remove.enabled=false;}
     connect(list,"selectionChanged(int)",function(index){remove.enabled=Number(index)>=0&&Number(index)<children.length;});
-    connect(add,"clicked()",function(){try{var child=String(name.text),next=children.slice(0);if(next.indexOf(child)>=0){say("That exact child name is already protected.");return;}next.push(child);var checked=support.setProtectedChildNames(config,figureName,next);if(!checked.ok){say(checked.message);return;}children=next;name.text="";populate();say("Protected "+child+" in this draft.");}catch(e){say(String(e));}});
-    connect(selected,"clicked()",function(){try{
-        var node=Scene.getPrimarySelection(),nodes=Scene.getNodeList(),current=node,seen=[],owner=null;
-        if(!node || node.inherits("DzBone")){say("Select a nonbone child in Scene.");return;}
-        while(current){if(support.isSupportedFigure(current,config)){owner=current;break;}for(var i=0;i<seen.length;i++)if(String(seen[i].elementID)===String(current.elementID))throw new Error("Child ancestry contains a cycle.");seen.push(current);if(seen.length>nodes.length)throw new Error("Child ancestry is unavailable.");current=current.getNodeParent();}
-        if(!owner || String(owner.elementID)===String(node.elementID) || support.figureInternalName(owner)!==figureName){say("Select an attached child of "+figureName+".");return;}
-        name.text=support.figureInternalName(node);say("Internal name: "+String(name.text)+" | Visible label: "+support.iconNodeLabel(node)+". Protect Name adds it.");
+    connect(add,"clicked()",function(){try{
+        var base=support.setProtectedChildNames(config,figureName,children);if(!base.ok){say(base.message);return;}
+        var result=support.addSelectedProtectedChildren(base.config,figureName,Scene);if(!result.ok){say(result.message);return;}
+        children=result.children.slice(0);populate();say(result.message+" Save updates this draft.");
     }catch(e){say(String(e));}});
-    connect(remove,"clicked()",function(){var index=Number(list.currentItem);if(index<0||index>=children.length)return;var child=children.splice(index,1)[0];if(String(name.text)===child)name.text="";populate();say("Removed protection for "+child+" in this draft.");});
-    connect(reset,"clicked()",function(){var defaults=support.defaultProtectedChildren();for(var i=0;i<defaults.length;i++)if(defaults[i].figure===figureName)for(var c=0;c<defaults[i].children.length;c++)if(children.indexOf(defaults[i].children[c])<0)children.push(defaults[i].children[c]);populate();say("Genesis child defaults restored; custom protection kept.");});
-    populate();say("Protected child names: "+children.length+".");
-    try{while(dialog.exec()){var next=children.slice(0),pending=String(name.text);if(pending && next.indexOf(pending)<0)next.push(pending);var result=support.setProtectedChildNames(config,figureName,next);if(result.ok)return {saved:true,config:result.config};say(result.message);}return {saved:false};}
+    connect(remove,"clicked()",function(){var index=Number(list.currentItem);if(index<0||index>=children.length)return;var child=children.splice(index,1)[0];populate();say("Removed protection for "+child+" in this draft.");});
+    populate();say("Select attached children in Scene to add protection. Existing names stay unchanged until Save.");
+    try{while(dialog.exec()){var result=support.setProtectedChildNames(config,figureName,children);if(result.ok)return {saved:true,config:result.config};say(result.message);}return {saved:false};}
     finally{dialog.deleteLater();}
 }
 function WM2ShowSupportedFigures(resourcePath) {
     var support=WM2Support,model=WM2SettingsModel(support,resourcePath,""),ui=WM2SettingsDialog("Wearables Manager - Supported Figures",resourcePath),dialog=ui.dialog,content=ui.content,layout=ui.layout,metrics=ui.metrics;
     layout.addWidget(WM2SettingsHeading(content,"Supported Figures","#FA8072"));
-    layout.addWidget(WM2SettingsPlainLabel(content,"The registry uses exact internal figure names, not labels. Select an independent figure or one of its bones, then Add Selected Figure. New custom types initially protect their current attachments, including clothing: select the type and open Protected Children to allow movable items. Figure choices apply on the next run; saved protection also applies to an open transfer dialog."));
+    layout.addWidget(WM2SettingsPlainLabel(content,"The registry uses exact internal figure names, not labels. Select an independent figure or one of its bones, then Add Selected Figure. A new registration with no existing profile protects every current nonbone descendant, including clothing and children beneath bones. Bones always stay attached. Existing customized profiles are kept: open Protected Children to allow movable items. Figure choices apply on the next run; saved protection also applies to an open transfer dialog."));
     var defaults=support.defaults().supportedFigures,list=new DzListBox(content),status=WM2SettingsPlainLabel(content,"");list.selectionMode=DzListBox.Single;list.minHeight=metrics.listHeight;layout.addWidget(list,1);
     var actions=WM2SettingsRow(content,layout),add=WM2SettingsButton(actions.widget,"Add Selected Figure",resourcePath,"Wearables Manager - Prop.png"),remove=WM2SettingsButton(actions.widget,"Remove",resourcePath,"Wearables Manager - Cancel.png"),reset=WM2SettingsButton(actions.widget,"Reset Genesis Defaults",resourcePath,"Wearables Manager - Group.png"),protect=WM2SettingsButton(actions.widget,"Protected Children...",resourcePath,"Wearables Manager - Ok.png");actions.layout.addWidget(add);actions.layout.addWidget(remove);actions.layout.addWidget(reset);actions.layout.addWidget(protect);layout.addWidget(status);
     function say(text){status.text=String(text);}

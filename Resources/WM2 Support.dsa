@@ -826,7 +826,7 @@ function WM2InstallSupportedFigures(oSupport) {
             if (!bExisting) oNext.supportedFigures.push(sName);
             var seeded=0,hasProfile=false;
             for(var p=0;p<oNext.protectedChildren.length;p++)if(oNext.protectedChildren[p].figure===sName)hasProfile=true;
-            if(arrBuiltInNames.indexOf(sName)<0 && !hasProfile) {
+            if(!hasProfile && (arrBuiltInNames.indexOf(sName)<0 || !bExisting)) {
                 var nodes=sceneNodes(),children=[],seen={};
                 if(!nodes || nodes.length>20000)throw new Error("Cannot safely enumerate this figure's attached children.");
                 validateSubtree(oFigure,nodes);
@@ -919,6 +919,51 @@ function WM2InstallSupportedFigures(oSupport) {
         if(!found)next.protectedChildren.push({figure:figureName,children:oSupport.clone(children)});
         return oSupport.validate(next);
         }catch(e){return {ok:false,config:null,message:"Protected children could not be updated: "+String(e)};}
+    };
+    oSupport.addSelectedProtectedChildren=function(config,figureName,scene) {
+        try {
+            var checked=oSupport.validate(config);if(!checked.ok)return checked;
+            if(checked.config.supportedFigures.indexOf(figureName)<0)throw new Error("Select a registered figure profile first.");
+            var selectedNodes=oSupport.iconSceneNodes(scene || Scene,true,2000);
+            if(!selectedNodes.ok)throw new Error("The current selection is unavailable.");
+            if(selectedNodes.truncated)throw new Error("Select at most 2,000 children at once.");
+            if(!selectedNodes.total)return {ok:false,config:config,message:"Select attached children in Scene, then Add Selected Children."};
+            var nodes=sceneNodes(scene),children=oSupport.protectedChildNames(checked.config,figureName),added=0,already=0,skipped=[];
+            if(!nodes)throw new Error("Scene children are unavailable.");
+            for(var n=0;n<selectedNodes.nodes.length;n++) {
+                var node=live(selectedNodes.nodes[n],nodes),current=node,owner=null,seen=[];
+                if(!node)throw new Error("A selected child is unavailable or has an ambiguous identity; no protection was added.");
+                if(node.inherits("DzBone")){skipped.push({label:oSupport.iconNodeLabel(node),reason:"bone; always stays attached"});continue;}
+                while(current) {
+                    if(seen.length>=nodes.length)throw new Error("Child ancestry contains a cycle; no protection was added.");
+                    for(var s=0;s<seen.length;s++)if(same(seen[s],current))throw new Error("Child ancestry contains a cycle; no protection was added.");
+                    seen.push(current);
+                    if(mainFigure(current,nodes)){owner=current;break;}
+                    var parent=current.getNodeParent(),liveParent=parent?live(parent,nodes):null;
+                    if(parent&&!liveParent)throw new Error("A selected child's parent is unavailable; no protection was added.");
+                    if(liveParent){
+                        var attached=liveParent.getNodeChildren(false),count=attached&&attached.length,matches=0;
+                        if(typeof count!=="number"||!isFinite(count)||count<0||Math.floor(count)!==count||count>nodes.length)throw new Error("Child membership is unavailable; no protection was added.");
+                        for(var a=0;a<count;a++){
+                            var actual=live(attached[a],nodes);if(!actual)throw new Error("Child membership is unavailable; no protection was added.");
+                            if(same(actual,current))matches++;
+                        }
+                        if(matches!==1)throw new Error("Selected child membership changed; no protection was added.");
+                    }
+                    current=liveParent;
+                }
+                if(!owner||same(owner,node)||internalName(owner)!==figureName){skipped.push({label:oSupport.iconNodeLabel(node),reason:"not an attached child of "+figureName});continue;}
+                var name=internalName(node);if(!name)throw new Error("A selected child has no readable internal name; no protection was added.");
+                if(children.indexOf(name)>=0)already++;
+                else {children.push(name);added++;}
+            }
+            var result=oSupport.setProtectedChildNames(checked.config,figureName,children);
+            if(!result.ok)return {ok:false,config:config,message:result.message};
+            var message=added?"Added protection for "+added+" selected child name"+(added===1?"":"s")+".":"No new protection was added.";
+            if(already)message+=" Already protected: "+already+".";
+            if(skipped.length){message+=" Skipped "+skipped.length+" selection"+(skipped.length===1?"":"s")+": ";for(var k=0;k<Math.min(8,skipped.length);k++)message+=(k?"; ":"")+skipped[k].label+" ("+skipped[k].reason+")";if(skipped.length>8)message+="; more selections outside this profile";}
+            return {ok:true,config:result.config,children:children.slice(0),added:added,alreadyProtected:already,skipped:skipped,message:message};
+        }catch(e){return {ok:false,config:config,message:"Protected selection could not be added: "+String(e)};}
     };
     oSupport.isProtectedTransfer=function(node,owner,config,knownNodes) {
         try {
