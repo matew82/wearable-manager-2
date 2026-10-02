@@ -180,6 +180,71 @@ test('back owner metadata uses the same Menu graph for nested bone fitted and pa
  }
 });
 
+// Numeric suffixes are literal pattern characters. The established separators
+// are checked outside the entire matched pattern; no token rewriting is implied.
+const numericWordKinds=['nameWord','labelWord','assetIdWord'];
+function numericWordNode(kind,value){
+ const n=metadataNode('/data/Vendor/Product/'+value+'/Name.dsf','Creator Earring04_L','DifferentRaw_Earring04_L');
+ n.name='UnrelatedInternal';n.label='Unrelated Label';
+ if(kind==='nameWord')n.name=value;
+ if(kind==='labelWord')n.label=value;
+ // A slash cannot be represented inside the original six-part item folder.
+ // Test that opaque punctuation through the documented raw-key fallback instead.
+ if(kind==='assetIdWord'&&value.includes('/')){n.assetUri.filePath='nonstandard/path';n.assetId=value;}
+ return n;
+}
+for(const kind of numericWordKinds)test(kind+' matches full numeric patterns and searches later overlapping occurrences',()=>{
+ const e=environment(),cases=[
+  ['Earring','Earring04_L',true],['Earring04','Earring04_L',true],['Earring04_L','Earring04_L',true],
+  ['eArRiNg04','EARRING04_l',true],['Earring04','Earring04',true],['Earring04','prefix-Earring04',true],
+  ['Earring04','Earring04-suffix',true],['Earring04','04Earring04_L',true],['Earring04','Earring04123',true],
+  ['Earring04','PreEarring04L Earring04_L',true],['Earring04','Earring04L !Earring04_L',true],
+  ['Earring04Earring04','Earring04Earring04Earring04',true],
+  ['Earring04','PreEarring04L PREearring04L',false],['Earring04','PreEarring04_Earring04L',false],
+  ['Earring04','Earring04L',false],['Earring04','PreEarring04_L',false],['Earring','Earrings04',false],
+  ['Earring04','Earring',false],['Earring_04','Earring04_L',false],['Earring_04','Earring_04_L',true]
+ ];
+ for(const [pattern,value,expected]of cases){const n=numericWordNode(kind,value),result=e.support.matchIcon([rule(kind,pattern)],n);assert.equal(result.matched,expected,kind+' '+JSON.stringify(pattern)+' in '+JSON.stringify(value));if(kind==='assetIdWord')assert.equal(e.support.iconNodeAssetId(n),value);}
+ noWrites(e);
+});
+for(const kind of numericWordKinds)test(kind+' numeric pattern boundaries retain the established separator set only',()=>{
+ const e=environment(),allowed=[' ','\t','\n','\r','\u00a0','0','4','9','-','_','!','\u2010','\u2011','\u2012','\u2013','\u2014','\u2015'],forbidden=['.','/','#',':','%','@','(',')','+','=','[',']','\\','\u2212','\u2016'];
+ for(const separator of allowed){const value='prefix'+separator+'Earring04'+separator+'suffix';assert.equal(e.support.matchIcon([rule(kind,'Earring04')],numericWordNode(kind,value)).matched,true,kind+' allowed '+JSON.stringify(separator));}
+ for(const separator of forbidden)for(const value of ['prefix'+separator+'Earring04','Earring04'+separator+'suffix'])assert.equal(e.support.matchIcon([rule(kind,'Earring04')],numericWordNode(kind,value)).matched,false,kind+' forbidden outside boundary '+JSON.stringify(value));
+ noWrites(e);
+});
+for(const kind of numericWordKinds)test(kind+' patterns containing regex punctuation remain literal',()=>{
+ const e=environment(),cases=[['Earring04.L','Earring04XL'],['Earring04+L','Earring044L'],['Earring04[L]','Earring04L'],['Earring04(L)','Earring04L'],['Earring04^L','Earring04L'],['Earring04$L','Earring04L'],['Earring04\\L','Earring04L'],['Earring04?L','Earring04L'],['Earring04|L','Earring04'],['Earring04{2}L','Earring044L']];
+ for(const [pattern,different]of cases){assert.equal(e.support.matchIcon([rule(kind,pattern)],numericWordNode(kind,'prefix_'+pattern+'!suffix')).matched,true,kind+' literal '+JSON.stringify(pattern));assert.equal(e.support.matchIcon([rule(kind,pattern)],numericWordNode(kind,different)).matched,false,kind+' must not evaluate '+JSON.stringify(pattern)+' as regex');}
+ noWrites(e);
+});
+for(const kind of numericWordKinds)test(kind+' numeric rule agrees across runtime resolver and both preview APIs using the Menu item key',()=>{
+ const n=numericWordNode(kind,'Earring04_L');if(kind!=='nameWord')n.name='EarringLegacy';
+ const rules=[rule('namePrefix','Earring','A.png'),rule(kind,'Earring04','B.PNG')],e=environment(n,rules),resolver=e.support.createIconResolver('C:/scratch/Resources',()=>rules),resolved=resolver.resolve(n,rules);
+ assert.equal(resolved.source,'custom');assert.equal(resolved.icon,'B.PNG');assert.equal(e.support.matchIcon(rules,n).kind,kind);
+ const simple=e.support.previewIconRules(rules,[n],1);assert.equal(simple.rows[0].match.kind,kind);assert.equal(simple.rows[0].assetId,'Earring04_L');assert.equal(simple.rows[0].assetCaption,'Earring04_L by Creator Earring04_L');
+ const menu=e.support.previewMenu(e.context.Scene,config(rules),resolver,false);assert(menu.ok,menu.message);assert.equal(menu.rows[0].source,resolved.source);assert.equal(menu.rows[0].icon,resolved.icon);assert.equal(menu.rows[0].assetId,'Earring04_L');
+ if(kind==='assetIdWord')for(const pattern of ['DifferentRaw','Creator'])assert.equal(e.support.matchIcon([rule(kind,pattern)],n).matched,false);
+ noWrites(e);
+});
+for(const kind of numericWordKinds)test(kind+' Earring04 actual UI preview and Save preserve the existing legacy rule',()=>{
+ const n=numericWordNode(kind,'Earring04_L');if(kind!=='nameWord')n.name='EarringLegacy';
+ const legacy=rule('namePrefix','Earring','A.png'),e=environment(n,[legacy]);
+ e.g.steps=[()=>{
+  e.click('Clear Draft');e.kindCombo().currentItem={nameWord:2,labelWord:3,assetIdWord:5}[kind];e.one('DzLineEdit').text='Earring04';e.iconCombo().currentItem=e.iconCombo().items.indexOf('B.PNG');
+  assert.equal(e.preview().rows.length,1);assert.equal(e.preview().rows[0].source,'custom');assert.equal(e.preview().rows[0].icon,'B.PNG');assert.equal(e.g.saved.length,0);return true;
+ }];
+ assert(dialog(e).saved);assert.deepEqual(plain(e.g.saved[0].config.iconRules),[legacy,rule(kind,'Earring04','B.PNG')]);
+ const saved=plain(e.g.saved[0].config.iconRules);assert.equal(e.support.createIconResolver('C:/scratch/Resources').resolve(n,saved).icon,'B.PNG');noWrites(e);
+});
+for(const kind of numericWordKinds)test(kind+' numeric model Save keeps exact-rule priority and legacy configuration unchanged',()=>{
+ const n=numericWordNode(kind,'Earring04_L');if(kind!=='nameWord')n.name='EarringLegacy';
+ const exactKind={nameWord:'exactName',labelWord:'exactLabel',assetIdWord:'exactAssetId'}[kind],legacy=rule('namePrefix','Earring','A.png'),exact=rule(exactKind,'Earring04_L','B.PNG'),e=environment(n,[legacy,exact]),model=e.model();
+ model.clear();model.setForm(rule(kind,'Earring04','A.png'));assert(model.save().ok);
+ assert.deepEqual(plain(e.g.saved[0].config.iconRules),[legacy,exact,rule(kind,'Earring04','A.png')]);
+ const result=e.support.matchIcon(e.g.saved[0].config.iconRules,n);assert.equal(result.kind,exactKind);assert.equal(result.icon,'B.PNG');noWrites(e);
+});
+
 const failures=tests.filter(item=>!item.pass);
 console.log(JSON.stringify({passed:tests.length-failures.length,failed:failures.length,nativeExecuted:false,sourceSHA256:Object.fromEntries(Object.entries(sourcePaths).map(([key,file])=>[key,crypto.createHash('sha256').update(snapshots.get(path.resolve(file))).digest('hex')])),failures}));
 process.exitCode=failures.length?1:0;
