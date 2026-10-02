@@ -4,22 +4,28 @@ Open **Wearables Manager Icon Rules** or **Wearables Manager Supported Figures**
 
 ## Icon rules
 
-Select a scene item and use **Use Selected Name** or **Use Selected Label**, choose its PNG icon, then Add/Update. Save also applies a changed rule form. Cancel discards the draft.
+When exactly one scene object is selected, Pattern starts with its label in **Exact label** mode. With no selection or several selections, the form stays blank and a notice explains how to use the selection. Manual rules remain available. **Use Selected Name/Label** copies text into Pattern while keeping the chosen Match mode. Choose Match separately. Each button requires one eligible object and is disabled when the pattern already equals that value, ignoring case. These buttons refresh when the pattern or scene selection changes. Bones are not selected-item icon targets; fitted clothing and props remain eligible.
 
-The four rule types compare text literally and are case-sensitive:
+Choose a PNG from the icon list, or **Browse PNG**. The file picker starts in this WM2 installation's `Resources` icons directory. An external PNG is copied into that directory under its original basename. If a different file already uses that name, you must choose another filename or cancel; existing files are never overwritten. Selecting the same canonical file already in Resources reuses it without copying. Failed/cancelled imports keep the current icon choice. Imported files stay available in Resources even if you later cancel the settings draft.
+
+**Clear Draft** deselects the rule and clears the form without adding it. **Add Rule** adds the form as a new row in the draft list; **Update Rule** replaces the selected row. **Save** writes the draft list and also commits a changed valid form. **Cancel** discards settings edits. Clear Draft is useful for abandoning an invalid form or starting a new rule while viewing a legacy row.
+
+All four modes compare literal text **ignoring case**, while retaining the spelling you enter:
 
 - Exact internal name.
 - Exact label, ignoring only a final numbered copy suffix such as `Hair (1)` or `Hair (2)`.
 - Word in internal name.
 - Word in label.
 
-A word pattern must have an allowed boundary on **both sides**: the start/end of the text, whitespace, a digit `0`–`9`, a hyphen/dash (`-` or Unicode U+2010–U+2015), underscore, or `!`. For example, `Duvet` matches `dForce Duvet`, `Duvet2`, `Duvet_cover` and `!Duvet!`; it does not match `DuvetCover` or `CoverDuvet`. Patterns are literal text, including punctuation; regex characters have no special meaning. Word rules use the original name/label and do not strip copy suffixes.
+A word pattern must have an allowed boundary on **both sides**: start/end, whitespace, a digit `0`-`9`, a hyphen/dash (`-` or Unicode U+2010-U+2015), underscore, or `!`. `Duvet` matches `dForce Duvet`, `Duvet2`, `Duvet_cover` and `!Duvet!`, including case variants. It does not match `DuvetCover` or `CoverDuvet`. Regex characters have no special meaning. Word rules use the original label/name without removing copy suffixes.
 
-An exact name wins before an exact label, followed by word rules and then legacy prefixes. The longest matching word pattern wins; equal lengths favor a label rule, then the earlier row. Move Up/Down changes the final row-order tie. Preview Scene uses the same matcher as Full/Menu and shows rule matches for up to 2,000 scene items without changing nodes.
+Exact name wins before exact label, then word rules, then legacy prefixes. Longer word patterns win; equal lengths favor label, then the earlier row. Move Up/Down changes the final row-order tie. The editor rejects a new rule of the same kind and pattern, ignoring case; update the existing row instead. Older saved rows differing only by case remain intact, with a validation notice explaining that the earlier matching row wins. Supported-figure names keep their separate exact case-sensitive policy.
 
-Previously saved name/label prefix rules keep their original matching behavior and are marked **Legacy** in the list and preview. Among legacy prefixes, longer patterns still win, then label before name, then the earlier row. They are not converted into word rules because this would change their meaning. You can move or remove a legacy row; its form is read-only. Use **New Rule** to create a replacement with one of the four current modes. New Rule first commits a valid pending form, and retains an invalid draft for correction. Existing legacy rows are preserved when settings are saved.
+Previously saved prefix rules remain marked **Legacy**, with their original prefix boundaries and longest/label/earlier-row ordering. Their icon matching now also ignores case. Their forms remain read-only; you can move or remove them. Use Clear Draft to create an exact or word replacement. Saving retains untouched legacy rows.
 
-Choose an existing PNG in Resources. A missing or unreadable configured icon uses WM2's existing automatic icon choice. Existing automatic mappings remain available.
+The lower results area is an icon-rule preview, not a second saved-rule list. It initially shows the selected item, or a bounded scene sample. **Preview Scene** checks up to 2,000 scene nodes using the same matcher as Full/Menu. Each row shows internal name, label, and the winning icon/rule, or the automatic-icon fallback. A valid current form is included as an unsaved candidate; it does not change any scene node or save settings. No matches, an empty scene, an invalid draft, and enumeration errors each produce an explicit result. DAZ indexed host collections are read without requiring native JavaScript Array branding. Preview covers scene nodes; it does not restrict itself to main figure owners or the current Menu transfer list.
+
+A missing or unreadable configured PNG uses WM2's existing automatic icon choice. Native layout and rendering remain for user verification; source/mock tests do not launch DAZ.
 
 ## Supported figures
 

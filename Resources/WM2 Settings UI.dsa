@@ -51,14 +51,14 @@ function WM2SettingsHeading(parent, text, color) {
     WM2SettingsCSS(label, "QLabel { color:" + safeColor + "; }");
     return label;
 }
-function WM2SettingsButton(parent, text, resourcePath, iconFilename) {
+function WM2SettingsButton(parent, text, resourcePath, iconFilename, rotateClockwise) {
     var button = new DzPushButton(parent), metrics = WM2SettingsMetrics(button);
     button.text = String(text); button.font = WM2SettingsFont(button, false); button.minHeight = metrics.buttonHeight;
     var textWidth = String(text).length * 7;
     try { if (typeof button.font.size == "function") textWidth = Number(button.font.size(String(text)).width); } catch (e) {}
     if (!isFinite(textWidth)) textWidth = String(text).length * 7;
     button.minWidth = Math.max(80, Math.ceil(textWidth) + metrics.iconSize + 30);
-    var loaded = false, image = null, scaledImage = null;
+    var loaded = false, image = null, scaledImage = null, rotatedImage = null;
     try {
         if (typeof resourcePath == "string" && resourcePath && typeof iconFilename == "string" && /^[^\\/:\x00-\x1f]+\.png$/i.test(iconFilename)) {
             var pixmap = new Pixmap(resourcePath.replace(/[\\/]+$/, "") + "/" + iconFilename);
@@ -72,12 +72,19 @@ function WM2SettingsButton(parent, text, resourcePath, iconFilename) {
                     scaled.fromImage(scaledImage);
                     if (!scaled.isNull()) pixmap = scaled;
                 }
+                if(rotateClockwise) {
+                    var pixels=scaledImage || image,w=Number(pixels.width),h=Number(pixels.height);
+                    if(w<=0 || h<=0 || w>metrics.iconSize || h>metrics.iconSize || typeof pixels.pixel!=="function" || typeof Image==="undefined" || typeof Image.Format_ARGB32==="undefined")throw new Error("Arrow rotation is unavailable.");
+                    rotatedImage=new Image(h,w,Image.Format_ARGB32);
+                    for(var y=0;y<h;y++)for(var x=0;x<w;x++)rotatedImage.setPixel(h-1-y,x,pixels.pixel(x,y));
+                    var vertical=new Pixmap();vertical.fromImage(rotatedImage);if(vertical.isNull())throw new Error("Arrow rotation failed.");pixmap=vertical;
+                }
                 button.pixmap = pixmap; loaded = true;
                 try { button.getWidget().iconSize = new Size(metrics.iconSize,metrics.iconSize); } catch (e) {}
             }
         }
     } catch (e) { loaded = false; }
-    finally { try { if (scaledImage && typeof scaledImage.deleteLater == "function") scaledImage.deleteLater(); } catch (e) {} try { if (image && typeof image.deleteLater == "function") image.deleteLater(); } catch (e) {} }
+    finally { try { if(rotatedImage && typeof rotatedImage.deleteLater==="function")rotatedImage.deleteLater(); }catch(e){} try { if (scaledImage && typeof scaledImage.deleteLater == "function") scaledImage.deleteLater(); } catch (e) {} try { if (image && typeof image.deleteLater == "function") image.deleteLater(); } catch (e) {} }
     // Keep the icon slot in the text fallback as well as the button's minimum width.
     WM2SettingsCSS(button, "QPushButton { padding:5px 8px;" + (loaded ? "" : " padding-left:32px;") + " }");
     return button;
@@ -143,17 +150,22 @@ function WM2SettingsModel(support, resourcePath, firstIcon) {
     model.setForm = function (form) { model.form={kind:String(form.kind),pattern:String(form.pattern),icon:String(form.icon)}; };
     model.commit = function (asNew) {
         if (!model.editable) return response(false,"These settings are read-only: "+model.message);
-        if (WM2SettingsIsLegacyKind(model.form.kind) || (!asNew && model.active>=0 && WM2SettingsIsLegacyKind(model.config.iconRules[model.active].kind))) return response(false,"Legacy prefix rules are preserved read-only. Use New Rule to create an exact or word rule.");
+        if (WM2SettingsIsLegacyKind(model.form.kind) || (!asNew && model.active>=0 && WM2SettingsIsLegacyKind(model.config.iconRules[model.active].kind))) return response(false,"Legacy prefix rules are preserved read-only. Use Clear Draft to create an exact or word rule.");
         var next=support.clone(model.config),index=!asNew&&model.active>=0?model.active:next.iconRules.length;
         if (!model.form.pattern) return response(false,"Enter a rule pattern before adding or updating it.");
         if (!model.form.icon) return response(false,"Choose an icon before adding or updating the rule.");
+        var old=index<next.iconRules.length?next.iconRules[index]:null;
+        var unchangedKey=old && old.kind===model.form.kind && old.pattern.toLowerCase()===model.form.pattern.toLowerCase();
+        if(!unchangedKey)for(var existing=0;existing<next.iconRules.length;existing++){
+            var other=next.iconRules[existing];
+            if(existing!==index && other.kind===model.form.kind && other.pattern.toLowerCase()===model.form.pattern.toLowerCase())return response(false,"A rule of this kind and pattern already exists (ignoring case). Update that row instead.");
+        }
         next.iconRules[index]=support.clone(model.form);
         var checked=WM2SettingsValidate(support,next);if(!checked.ok)return checked;
         model.config=support.clone(checked.config);model.active=index;model.baseline=JSON.stringify(model.form);return {ok:true,index:index};
     };
-    model.startNew = function () {
+    model.resetDraft = function () {
         if(!model.editable)return response(false,"These settings are read-only.");
-        if(model.dirty()){var committed=model.commit(false);if(!committed.ok)return committed;}
         model.clear();return response(true);
     };
     model.select = function (index) {
@@ -186,60 +198,113 @@ function WM2SettingsModel(support, resourcePath, firstIcon) {
     model.clear();return model;
 }
 function WM2SettingsPreviewText(result) {
+    if(!result || result.ok===false)return "Preview unavailable: "+(result&&result.message?String(result.message):"No preview data was returned.");
     var lines=["Matched "+result.matched+" of "+result.scanned+" scanned scene items"+(result.truncated?" (limited to "+result.limit+" of "+result.total+")":"")+"."];
+    if(result.scanned===0)lines.push("The scene is empty; there are no items to preview.");
+    else if(result.matched===0)lines.push("No icon rule matches these items. Their automatic icons remain in use.");
     for(var i=0;i<result.rows.length;i++){
         var row=result.rows[i],match=row.match;
-        lines.push(row.name+" | "+row.label+" -> "+(match&&match.matched?match.icon+" (rule "+(match.ruleIndex+1)+", "+WM2SettingsKindLabel(match.kind)+")":"original icon"));
+        lines.push((row.name||"<unnamed>")+" | "+(row.label||"<unlabeled>")+" -> "+(match&&match.matched?match.icon+" (rule "+(match.ruleIndex+1)+", "+WM2SettingsKindLabel(match.kind)+")":"automatic icon"));
     }
     return lines.join("\n");
+}
+function WM2SettingsPromptIconName(parent, currentName) {
+    var dialog=new DzBasicDialog();dialog.caption="Choose another icon filename";
+    dialog.showHelpButton(false);dialog.showApplyButton(false);dialog.setAcceptButtonText("Use Filename");dialog.setCancelButtonText("Cancel");
+    var content=new DzWidget(dialog),layout=new DzVBoxLayout(content);layout.margin=10;layout.spacing=8;
+    layout.addWidget(WM2SettingsPlainLabel(content,"The icon filename already exists or is invalid. Enter another PNG basename. Existing files will not be overwritten."));
+    var filename=new DzLineEdit(content);filename.text=String(currentName||"");layout.addWidget(filename);dialog.addWidget(content);
+    try { return dialog.exec()?String(filename.text):null; }
+    finally { dialog.deleteLater(); }
 }
 function WM2ShowIconRules(resourcePath) {
     var support=WM2Support,icons=[],iconError="";
     try { icons=WM2SettingsIcons(resourcePath); } catch(e) { iconError="Icon listing failed: "+String(e); }
     var model=WM2SettingsModel(support,resourcePath,icons.length?icons[0]:""),ui=WM2SettingsDialog("Wearables Manager - Icon Rules",resourcePath),dialog=ui.dialog,content=ui.content,layout=ui.layout,metrics=ui.metrics;
     layout.addWidget(WM2SettingsHeading(content,"Icon Rules","#87c9ff"));
-    layout.addWidget(WM2SettingsPlainLabel(content,"Choose a rule to edit, or New Rule to start another. Add/Update commits the form; Save also commits a changed form. Matching is literal and case-sensitive. Word edges must be start/end, whitespace, a digit (0-9), hyphen/dash, underscore or !. Exact name wins before exact label, then word rules, then legacy prefixes. Longer word patterns win; equal lengths prefer label, then the earlier row. Only exact labels ignore a final ' (digits)' copy suffix. Legacy prefixes are preserved read-only; they can be moved or removed."));
+    layout.addWidget(WM2SettingsPlainLabel(content,"Clear Draft resets the form. Add Rule adds a new draft row; Update Rule replaces the selected row. Save writes settings and commits a changed valid form. Matching ignores case and uses literal text. Word edges are start/end, whitespace, digits 0-9, hyphen/dash, underscore or !. Exact name wins before exact label, then longer word rules, then legacy prefixes; label and earlier row break ties. Only exact labels ignore a final ' (digits)' copy suffix."));
     var status=WM2SettingsPlainLabel(content,""),list=new DzListBox(content);list.selectionMode=DzListBox.Single;list.minHeight=metrics.listHeight;layout.addWidget(list,1);
     var kindRow=WM2SettingsRow(content,layout),kind=new DzComboBox(kindRow.widget),kinds=["exactName","exactLabel","nameWord","labelWord"];
     kindRow.layout.addWidget(WM2SettingsPlainLabel(kindRow.widget,"Match"));for(var i=0;i<kinds.length;i++)kind.addItem(WM2SettingsKindLabel(kinds[i]));kind.minHeight=metrics.fieldHeight;kindRow.layout.addWidget(kind,1);
     var patternRow=WM2SettingsRow(content,layout),pattern=new DzLineEdit(patternRow.widget);pattern.minHeight=metrics.fieldHeight;patternRow.layout.addWidget(WM2SettingsPlainLabel(patternRow.widget,"Pattern"));patternRow.layout.addWidget(pattern,1);
-    var iconRow=WM2SettingsRow(content,layout),icon=new DzComboBox(iconRow.widget),iconValues=icons.slice(0);icon.minHeight=metrics.fieldHeight;iconRow.layout.addWidget(WM2SettingsPlainLabel(iconRow.widget,"Icon"));iconRow.layout.addWidget(icon,1);
+    var iconRow=WM2SettingsRow(content,layout),icon=new DzComboBox(iconRow.widget),iconValues=icons.slice(0),browse=WM2SettingsButton(iconRow.widget,"Browse PNG",resourcePath,"Wearables Manager - Prop.png");icon.minHeight=metrics.fieldHeight;iconRow.layout.addWidget(WM2SettingsPlainLabel(iconRow.widget,"Icon"));iconRow.layout.addWidget(icon,1);iconRow.layout.addWidget(browse);
     for(var j=0;j<icons.length;j++)icon.addItem(icons[j]);
-    var actions=WM2SettingsRow(content,layout),selectionActions=WM2SettingsRow(content,layout),moving=WM2SettingsRow(content,layout),populating=false;
-    var add=WM2SettingsButton(actions.widget,"Add",resourcePath,"Wearables Manager - Prop.png"),update=WM2SettingsButton(actions.widget,"Update",resourcePath,"Wearables Manager - Ok.png"),remove=WM2SettingsButton(actions.widget,"Remove",resourcePath,"Wearables Manager - Cancel.png");
-    var newRule=WM2SettingsButton(actions.widget,"New Rule",resourcePath,"Wearables Manager - Prop.png");
-    actions.layout.addWidget(newRule);actions.layout.addWidget(add);actions.layout.addWidget(update);actions.layout.addWidget(remove);
+    var actions=WM2SettingsRow(content,layout),selectionActions=WM2SettingsRow(content,layout),moving=WM2SettingsRow(content,layout),populating=false,selection=null,connectedSelection=false;
+    var add=WM2SettingsButton(actions.widget,"Add Rule",resourcePath,"Wearables Manager - Prop.png"),update=WM2SettingsButton(actions.widget,"Update Rule",resourcePath,"Wearables Manager - Ok.png"),remove=WM2SettingsButton(actions.widget,"Remove",resourcePath,"Wearables Manager - Cancel.png"),clearDraft=WM2SettingsButton(actions.widget,"Clear Draft",resourcePath,"Wearables Manager - Empty.png");
+    actions.layout.addWidget(clearDraft);actions.layout.addWidget(add);actions.layout.addWidget(update);actions.layout.addWidget(remove);
     var useName=WM2SettingsButton(selectionActions.widget,"Use Selected Name",resourcePath,"Wearables Manager - Prop.png"),useLabel=WM2SettingsButton(selectionActions.widget,"Use Selected Label",resourcePath,"Wearables Manager - Prop.png");selectionActions.layout.addWidget(useName);selectionActions.layout.addWidget(useLabel);
-    var up=WM2SettingsButton(moving.widget,"Move Up",resourcePath,"Wearables Manager - Arrow Left.png"),down=WM2SettingsButton(moving.widget,"Move Down",resourcePath,"Wearables Manager - Arrow Right.png"),previewButton=WM2SettingsButton(moving.widget,"Preview Scene",resourcePath,"Wearables Manager - Group.png");moving.layout.addWidget(up);moving.layout.addWidget(down);moving.layout.addWidget(previewButton);
-    layout.addWidget(WM2SettingsPlainLabel(content,"Preview Scene shows which rule wins for up to 2,000 scene items. Missing or unreadable configured PNGs use the automatic icon."));
-    var preview=new DzTextEdit(content);preview.readOnly=true;preview.acceptRichText=false;preview.plainText="No nodes are changed and preview does not save settings.";preview.minHeight=metrics.previewHeight;layout.addWidget(preview,1);layout.addWidget(status);
+    var up=WM2SettingsButton(moving.widget,"Move Up",resourcePath,"Wearables Manager - Arrow Left.png",true),down=WM2SettingsButton(moving.widget,"Move Down",resourcePath,"Wearables Manager - Arrow Right.png",true),previewButton=WM2SettingsButton(moving.widget,"Preview Scene",resourcePath,"Wearables Manager - Group.png");moving.layout.addWidget(up);moving.layout.addWidget(down);moving.layout.addWidget(previewButton);
+    layout.addWidget(WM2SettingsPlainLabel(content,"Results show the selected item or a scene sample. Preview Scene scans up to 2,000 scene nodes and includes a valid current form as an unsaved candidate. It changes no nodes and saves no settings. Legacy prefix forms are read-only; use Clear Draft for a new rule."));
+    var preview=new DzTextEdit(content);preview.readOnly=true;preview.acceptRichText=false;preview.minHeight=metrics.previewHeight;layout.addWidget(preview,1);layout.addWidget(status);
     function say(text){status.text=String(text);}
-    function capture(){if(!populating&&!WM2SettingsIsLegacyKind(model.form.kind))model.setForm({kind:kinds[kind.currentItem]||"exactName",pattern:String(pattern.text),icon:iconValues[icon.currentItem]||""});}
+    function refreshSelection(){
+        selection=support.iconSelection(Scene);
+        var editable=model.editable&&!WM2SettingsIsLegacyKind(model.form.kind),value=model.form.pattern.toLowerCase();
+        useName.enabled=editable&&selection.ok&&value!==support.iconNodeName(selection.node).toLowerCase();
+        useLabel.enabled=editable&&selection.ok&&value!==support.iconNodeLabel(selection.node).toLowerCase();
+        if(!selection.ok)say(selection.message);
+        return selection;
+    }
+    function capture(){if(!populating&&!WM2SettingsIsLegacyKind(model.form.kind)){model.setForm({kind:kinds[kind.currentItem]||"exactName",pattern:String(pattern.text),icon:iconValues[icon.currentItem]||""});refreshSelection();}}
+    function renderPreview(wholeScene, includeForm){
+        try {
+            var rules=support.clone(model.config.iconRules),note="";
+            if(includeForm && model.form.pattern && model.form.icon && !WM2SettingsIsLegacyKind(model.form.kind)) {
+                var next=support.clone(model.config),index=model.active>=0?model.active:next.iconRules.length;next.iconRules[index]=support.clone(model.form);
+                var checked=WM2SettingsValidate(support,next);
+                if(checked.ok){rules=checked.config.iconRules;note="Current form included as an unsaved candidate.\n";}
+                else note="Current form is not included: "+checked.message+"\n";
+            }
+            var current=selection || support.iconSelection(Scene),nodes;
+            if(!wholeScene && current.ok)nodes={ok:true,nodes:[current.node],total:1,truncated:false};
+            else nodes=support.iconSceneNodes(Scene,false,wholeScene?2000:200);
+            if(!nodes.ok){preview.plainText=note+"Preview unavailable: "+nodes.message;return;}
+            var result=support.previewIconRules(rules,nodes.nodes,wholeScene?2000:200);
+            result.total=nodes.total;result.truncated=result.scanned<nodes.total;
+            preview.plainText=note+WM2SettingsPreviewText(result);
+        }catch(e){preview.plainText="Preview unavailable: "+String(e);}
+    }
     function populate(){populating=true;try{
         list.clear();for(var n=0;n<model.config.iconRules.length;n++){var rule=model.config.iconRules[n];list.insertItem((n+1)+". "+WM2SettingsKindLabel(rule.kind)+" | "+rule.pattern+" -> "+rule.icon);}
         for(var selected=0;selected<model.config.iconRules.length;selected++)list.setSelected(selected,false);
-        list.currentItem=model.active;
-        if(model.active>=0)list.setSelected(model.active,true);
+        list.currentItem=model.active;if(model.active>=0)list.setSelected(model.active,true);
         kind.currentItem=kinds.indexOf(model.form.kind);pattern.text=model.form.pattern;
         var index=iconValues.indexOf(model.form.icon);if(index<0&&model.form.icon){iconValues.push(model.form.icon);icon.addItem(model.form.icon+" [missing]");index=iconValues.length-1;}icon.currentItem=index;
-        var selected=model.editable&&model.active>=0,canEdit=model.editable&&!WM2SettingsIsLegacyKind(model.form.kind);
-        kind.enabled=canEdit;pattern.enabled=canEdit;icon.enabled=canEdit;add.enabled=canEdit;useName.enabled=canEdit;useLabel.enabled=canEdit;newRule.enabled=model.editable;
-        update.enabled=selected&&canEdit;remove.enabled=selected;up.enabled=selected&&model.active>0;down.enabled=selected&&model.active<model.config.iconRules.length-1;
-    }finally{populating=false;}}
-    function perform(fn,clear){capture();try{var result=fn();if(!result.ok){say(result.message);return;}if(clear)model.clear();populate();say("Changes are ready to save.");}catch(e){say(String(e));}}
-    connect(kind,"currentIndexChanged(int)",capture);connect(pattern,"textChanged(const QString&)",capture);connect(icon,"currentIndexChanged(int)",capture);
+        var hasSelection=model.editable&&model.active>=0,canEdit=model.editable&&!WM2SettingsIsLegacyKind(model.form.kind);
+        kind.enabled=canEdit;pattern.enabled=canEdit;icon.enabled=canEdit;browse.enabled=canEdit;add.enabled=canEdit;clearDraft.enabled=model.editable;
+        update.enabled=hasSelection&&canEdit;remove.enabled=hasSelection;up.enabled=hasSelection&&model.active>0;down.enabled=hasSelection&&model.active<model.config.iconRules.length-1;
+    }finally{populating=false;}refreshSelection();renderPreview(false,false);}
+    function perform(fn,clear){capture();try{var result=fn();if(!result.ok){say(result.message);return;}if(clear)model.clear();populate();say("Draft list updated. Save writes these changes.");}catch(e){say(String(e));}}
+    function edited(){if(populating)return;capture();renderPreview(false,true);}
+    connect(kind,"currentIndexChanged(int)",edited);connect(pattern,"textChanged(const QString&)",edited);connect(icon,"currentIndexChanged(int)",edited);
     connect(list,"selectionChanged(int)",function(index){if(populating)return;capture();var result=model.select(Number(index));if(!result.ok){populating=true;try{for(var n=0;n<model.config.iconRules.length;n++)list.setSelected(n,false);list.currentItem=model.active;if(model.active>=0)list.setSelected(model.active,true);}finally{populating=false;}say(result.message);return;}populate();});
-    connect(newRule,"clicked()",function(){perform(model.startNew,false);});
+    connect(clearDraft,"clicked()",function(){perform(model.resetDraft,false);say("Form cleared; no rule was added.");});
     connect(add,"clicked()",function(){perform(function(){return model.commit(true);},true);});connect(update,"clicked()",function(){perform(function(){return model.active<0?{ok:false,message:"Select a rule to update."}:model.commit(false);},true);});connect(remove,"clicked()",function(){perform(model.remove,false);});
     connect(up,"clicked()",function(){perform(function(){return model.move(-1);},false);});connect(down,"clicked()",function(){perform(function(){return model.move(1);},false);});
-    function useSelected(label){try{var node=Scene.getPrimarySelection();if(!node){say("Select a scene item first.");return;}capture();model.setForm({kind:label?"exactLabel":"exactName",pattern:label?String(node.getLabel()):String(node.name),icon:model.form.icon});populate();say("Selected value copied to the form. Add/Update or Save commits it.");}catch(e){say(String(e));}}
+    function useSelected(label){try{var current=refreshSelection();if(!current.ok){say(current.message);return;}capture();model.setForm({kind:model.form.kind,pattern:label?support.iconNodeLabel(current.node):support.iconNodeName(current.node),icon:model.form.icon});populate();renderPreview(false,true);say("Selected text copied to Pattern; Match mode kept. Add Rule, Update Rule or Save applies the changed form.");}catch(e){say(String(e));}}
     connect(useName,"clicked()",function(){useSelected(false);});connect(useLabel,"clicked()",function(){useSelected(true);});
-    connect(previewButton,"clicked()",function(){capture();try{var rules=support.clone(model.config.iconRules);if(model.dirty()){var next=support.clone(model.config),index=model.active>=0?model.active:next.iconRules.length;next.iconRules[index]=support.clone(model.form);var checked=WM2SettingsValidate(support,next);if(!checked.ok){say(checked.message);return;}rules=checked.config.iconRules;}preview.plainText=WM2SettingsPreviewText(support.previewIconRules(rules,Scene.getNodeList(),2000));}catch(e){say(String(e));}});
-    kind.enabled=model.editable;pattern.enabled=model.editable;icon.enabled=model.editable;add.enabled=model.editable;useName.enabled=model.editable;useLabel.enabled=model.editable;dialog.setAcceptButtonEnabled(model.editable);ui.saveButton.enabled=model.editable;
-    populate();say((model.message||("Settings: "+model.status+"."))+(iconError?" "+iconError:""));
-    try { while(dialog.exec()){capture();try{var saved=model.save();if(saved.ok)return {saved:true,config:support.clone(model.config),message:saved.message};say(saved.message);populate();}catch(e){say(String(e));}}return {saved:false}; }
-    finally { dialog.deleteLater(); }
+    connect(browse,"clicked()",function(){try{
+        var selectedPath=String(FileDialog.doFileDialog(true,"Choose PNG Icon",resourcePath,"PNG Images (*.png *.PNG)",0,dialog));if(!selectedPath)return;
+        var name,result;
+        for(var attempt=0;attempt<16;attempt++){
+            result=support.importIcon(resourcePath,selectedPath,name);
+            if(result.ok){capture();var index=iconValues.indexOf(result.icon);if(index<0){iconValues.push(result.icon);icon.addItem(result.icon);index=iconValues.length-1;}icon.currentItem=index;capture();renderPreview(false,true);say(result.message);return;}
+            if(result.status!=="collision"&&result.status!=="invalid-name"){say(result.message);return;}
+            name=WM2SettingsPromptIconName(dialog,result.name || name || "");if(name===null){say("Icon import cancelled; current icon kept.");return;}
+        }
+        say("Icon import stopped after repeated invalid or conflicting filenames. Current icon kept.");
+    }catch(e){say("Icon import failed; current icon kept. "+String(e));}});
+    connect(previewButton,"clicked()",function(){capture();renderPreview(true,true);});
+    function selectionChanged(){var current=refreshSelection();if(current.ok)say("Selected: "+support.iconNodeName(current.node)+" | "+support.iconNodeLabel(current.node));renderPreview(false,true);}
+    try{connect(Scene,"nodeSelectionListChanged()",selectionChanged);connectedSelection=true;}catch(e){}
+    selection=support.iconSelection(Scene);
+    if(selection.ok){model.setForm({kind:"exactLabel",pattern:support.iconNodeLabel(selection.node),icon:model.form.icon});model.baseline=JSON.stringify(model.form);}
+    dialog.setAcceptButtonEnabled(model.editable);ui.saveButton.enabled=model.editable;
+    populate();say((model.message||("Settings: "+model.status+"."))+(iconError?" "+iconError:"")+(selection.ok?"":" "+selection.message));
+    try { while(dialog.exec()){capture();try{var saved=model.save();if(saved.ok)return {saved:true,config:support.clone(model.config),message:saved.message};populate();say(saved.message);}catch(e){say(String(e));}}return {saved:false}; }
+    finally { try{if(connectedSelection)disconnect(Scene,"nodeSelectionListChanged()",selectionChanged);}catch(e){} dialog.deleteLater(); }
 }
+
 function WM2SettingsResetGenesis(support, config) {
     var next=support.clone(config),defaults=support.defaults().supportedFigures;
     for(var i=0;i<defaults.length;i++)if(next.supportedFigures.indexOf(defaults[i])<0)next.supportedFigures.push(defaults[i]);

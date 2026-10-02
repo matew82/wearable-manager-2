@@ -32,7 +32,7 @@ test('Longest label prefix beats shorter name prefix',()=>{const rules=[rule('na
 test('Equal prefix lengths prefer label before name regardless of order',()=>{const rules=[rule('namePrefix','Hair','np.png'),rule('labelPrefix','Coat','lp.png')];assert.equal(support.matchIcon(rules,node('HairNode','CoatLabel')).icon,'lp.png');});
 test('Earlier matching exact rule wins final tie',()=>assert.equal(support.matchIcon([rule('exactLabel','Hair','one.png'),rule('exactLabel','Hair (1)','two.png')],node('Name','Hair (2)')).ruleIndex,0));
 test('Earlier matching same-kind prefix wins final tie',()=>assert.equal(support.matchIcon([rule('labelPrefix','Hair','one.png'),rule('labelPrefix','Hair','two.png')],node('Name','HairLong')).ruleIndex,0));
-test('Case-sensitive rules never fold letters',()=>{assert.equal(support.matchIcon([rule('exactName','hair'),rule('labelPrefix','hair')],node('Hair','Hair')).matched,false);});
+test('Icon rules ignore letter case consistently',()=>{assert.equal(support.matchIcon([rule('exactName','hair'),rule('labelPrefix','hair')],node('Hair','Hair')).matched,true);});
 test('Unicode labels match literal suffix-aware exact text',()=>assert.equal(support.matchIcon([rule('exactLabel','髪 🎨')],node('Name','髪 🎨 (7)')).matched,true));
 test('Prefix metacharacters are literal, never regex or wildcard',()=>{assert.equal(support.matchIcon([rule('labelPrefix','Hair.*')],node('Name','Hair.* Long')).matched,true);assert.equal(support.matchIcon([rule('labelPrefix','Hair.*')],node('Name','Hair Long')).matched,false);});
 test('Exact metacharacters remain literal',()=>assert.equal(support.matchIcon([rule('exactLabel','[Hair]+?')],node('Name','[Hair]+? (1)')).matched,true));
@@ -98,7 +98,7 @@ for(const kind of ['nameWord','labelWord']) {
     assert(support.matchIcon([rule(kind,'a-a')],item('Xa-a-a')).matched);
   });
   test(kind+': case and whitespace stay literal',()=>{
-    assert.equal(matches('duvet'),false);assert.equal(support.matchIcon([rule(kind,' Duvet ')],item('! Duvet !')).matched,true);
+    assert.equal(matches('duvet'),true);assert.equal(support.matchIcon([rule(kind,' Duvet ')],item('! Duvet !')).matched,true);
     assert.equal(support.matchIcon([rule(kind,' Duvet ')],item('Duvet')).matched,false);
     assert.equal(support.matchIcon([rule(kind,'Duvet cover')],item('!Duvet cover!')).matched,true);
   });
@@ -155,6 +155,18 @@ for(const file of ['Wearables Manager Full.dsa','Wearables Manager Menu.dsa'])te
   assert.equal(a.icons.GetIconForWearable(node('Camera','dForce Duvet')).path,'/Resources/custom.png');
   assert.equal(a.icons.GetIconForWearable(node('Camera','DuvetCover')).path,'/Resources/Wearables Manager - Camera.PNG');assert.equal(a.writes.length,0);
 });
+
+for(const kind of ['exactName','exactLabel','nameWord','labelWord','namePrefix','labelPrefix'])test(kind+': preview/runtime case variants agree and preserve original spelling',()=>{
+  const rules=[rule(kind,'DuVeT')],n=node('duvet','DUVET (2)'),result=support.matchIcon(rules,n),preview=support.previewIconRules(rules,{0:n,length:1},10);
+  assert(result.matched);assert.equal(result.pattern,'DuVeT');assert.deepStrictEqual(plain(preview.rows[0].match),plain(result));assert.equal(preview.rows[0].label,'DUVET (2)');
+});
+test('indexed DAZ-like collections preview actual entries instead of becoming empty',()=>{const n=node('Hat','Hat'),host={0:n,length:1};assert.equal(Array.isArray(host),false);const p=support.previewIconRules([rule('exactName','hat')],host);assert.equal(p.scanned,1);assert.equal(p.total,1);assert.equal(p.matched,1);});
+test('host enumeration prefers count/index APIs and bounds getters',()=>{let reads=0;const scene={getNumNodes:()=>2100,getNode(i){reads++;return node('Node'+i,'Hat');},getNodeList(){throw Error('must not use branded list');}};const nodes=support.iconSceneNodes(scene,false,2000);assert(nodes.ok);assert.equal(nodes.nodes.length,2000);assert.equal(nodes.total,2100);assert.equal(reads,2000);});
+test('host list fallback uses only length/index rather than Array/filter/iterator methods',()=>{const n=node('Hat','Hat'),host={0:n,length:1,filter(){throw Error('no filter');},slice(){throw Error('no slice');}},p=support.iconSceneNodes({getNodeList:()=>host},false,10);assert(p.ok);assert.equal(p.total,1);assert.equal(support.previewIconRules([rule('labelWord','HAT')],p.nodes).matched,1);});
+test('invalid collection and Scene errors are reported instead of showing an empty scene',()=>{for(const nodes of [{}, {length:-1},{length:'1'},{length:Infinity},{length:1.5}])assert.equal(support.previewIconRules([],nodes).ok,false);assert.equal(support.iconSceneNodes({getNumNodes(){throw Error('gone');},getNode(){}},false).ok,false);assert.equal(support.iconSceneNodes({getNodeList:()=>null},false).ok,false);});
+test('single selection never silently reduces a multiple host selection to its first node',()=>{const one=node('Duvet','Visible'),two=node('Hat','Hat');assert.equal(support.iconSelection({getSelectedNodeList:()=>({0:one,1:two,length:2})}).ok,false);const selected=support.iconSelection({getNumSelectedNodes:()=>1,getSelectedNode:()=>one});assert(selected.ok);assert.equal(selected.node,one);assert.equal(support.iconSelection({getSelectedNodeList:()=>[]}).ok,false);});
+test('fitted/parented props remain eligible icon targets; main-owner rules are not used',()=>{const prop={...node('Hat','Hat'),inherits:type=>type==='DzNode',getNodeParent:()=>({}),getFollowTarget:()=>({})};assert(support.isIconNode(prop));assert.equal(support.isIconNode({...prop,inherits:type=>['DzNode','DzBone'].includes(type)}),false);});
+test('case-equivalent exact matches keep deterministic earlier-row priority',()=>{const rows=[rule('exactLabel','Duvet','one.png'),rule('exactLabel','DUVET','two.png')];assert.equal(support.matchIcon(rows,node('Other','duvet (1)')).icon,'one.png');});
 
 const result={status:integrated?'Actual integrated source':'Pure methods and UNAPPLIED actual-source integration overlay',nativeExecuted:false,productSourcesWritten:false,sourceRoot:root,supportSource:supportPath||'wm2-icon-methods.body.js',sourceInventory,cases,passed:cases.length};
 fs.writeFileSync(path.join(root,'.test-output/features-icons.json'),JSON.stringify(result,null,2)+'\n');

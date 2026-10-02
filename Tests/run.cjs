@@ -31,6 +31,7 @@ const suites=[
  ['features/icons.cjs','--source-root',root,'--support-source',path.join(root,'Resources/WM2 Support.dsa'),'--integrated'],
  ['features/figures.cjs','--factory',path.join(root,'Resources/WM2 Support.dsa'),'--output',path.join(output,'features-figures.json')],
  ['features/ui.cjs'],
+ ['features/icon-import.cjs'],
  ['features/integration.cjs','--source-root',root,'--output',path.join(output,'features-integration.json')],
  ['integration.cjs','--source-root',root],
  ['storage/regressions.cjs','--sourceRoot',root,'--expect','after'],

@@ -86,7 +86,7 @@ var WM2Support = (function () {
             if (!denseArray(config.iconRules, MAX_RULES)) return invalid("iconRules must be a dense array with at most " + MAX_RULES + " entries.");
             if (!denseArray(config.supportedFigures, MAX_FIGURES)) return invalid("supportedFigures must be a dense array with at most " + MAX_FIGURES + " entries.");
             var normalized = {schema:1, iconRules:[], supportedFigures:[]};
-            var ruleSeen = {}, nameSeen = {}, kinds = {exactName:1, exactLabel:1, nameWord:1, labelWord:1, labelPrefix:1, namePrefix:1};
+            var ruleSeen = {}, foldedSeen = {}, warnings = [], nameSeen = {}, kinds = {exactName:1, exactLabel:1, nameWord:1, labelWord:1, labelPrefix:1, namePrefix:1};
             for (var i = 0; i < config.iconRules.length; i++) {
                 var rule = config.iconRules[i];
                 if (!object(rule) || !keysExactly(rule, {kind:1, pattern:1, icon:1})) return invalid("Icon rule " + (i + 1) + " must contain only kind, pattern and icon.");
@@ -97,6 +97,9 @@ var WM2Support = (function () {
                 var ruleKey = "_" + rule.kind + ":" + rule.pattern;
                 if (own.call(ruleSeen, ruleKey)) return invalid("Icon rule " + (i + 1) + " duplicates an existing kind and literal pattern.");
                 ruleSeen[ruleKey] = true;
+                var foldedKey="_"+rule.kind+":"+rule.pattern.toLowerCase();
+                if(own.call(foldedSeen,foldedKey))warnings.push("Icon rules "+(foldedSeen[foldedKey]+1)+" and "+(i+1)+" differ only by case; the earlier matching row wins.");
+                else foldedSeen[foldedKey]=i;
                 normalized.iconRules.push({kind:rule.kind, pattern:rule.pattern, icon:rule.icon});
             }
             for (var n = 0; n < config.supportedFigures.length; n++) {
@@ -107,7 +110,7 @@ var WM2Support = (function () {
                 nameSeen[nameKey] = true;
                 normalized.supportedFigures.push(name);
             }
-            return {ok:true, config:normalized, message:""};
+            return {ok:true, config:normalized, message:warnings.join(" ")};
         } catch (e) { return invalid("Settings could not be validated: " + String(e)); }
     }
     function fileError(file) {
@@ -152,7 +155,7 @@ var WM2Support = (function () {
         if (object(parsed) && typeof parsed.schema === "number" && isFinite(parsed.schema) && parsed.schema > 1) return {config:defaults(), status:"future-schema", message:"WM2 Settings.json uses schema " + parsed.schema + ". Defaults are active; this version will not overwrite the newer settings.", rawToken:read.rawToken, readOnly:true};
         var result = validate(parsed);
         if (!result.ok) return {config:defaults(), status:"invalid", message:result.message + " Defaults are active; an explicit Save can repair the file while retaining a backup.", rawToken:read.rawToken, readOnly:false};
-        return {config:result.config, status:"ok", message:"", rawToken:read.rawToken, readOnly:false};
+        return {config:result.config, status:"ok", message:result.message, rawToken:read.rawToken, readOnly:false};
     }
     function load(resourcePath) {
         try { return parsedState(readFile(settingsPath(resourcePath))); }
@@ -261,7 +264,45 @@ var WM2Support = (function () {
             return failure("Settings Save failed: " + detail + (tempOwned ? removeOwned(temp) : ""), restored && restored.ok ? before.rawToken : null);
         }
     }
-    return {defaults:defaults, validate:validate, load:load, save:save, clone:clone};
+    function importIcon(resourcePath, sourcePath, requestedName) {
+        function fail(status, message) { return {ok:false,status:status,message:message,icon:null}; }
+        function canonical(info) { return String(info.canonicalFilePath()).replace(/\\/g,"/"); }
+        function samePath(a,b) { return !!a && !!b && (/^(?:[a-z]:|\/\/)/i.test(a) ? a.toLowerCase() === b.toLowerCase() : a === b); }
+        function readablePNG(path) {
+            var image = null;
+            try { image = new Pixmap(path);return !!image && !image.isNull() && Number(image.width)>0 && Number(image.height)>0; }
+            finally { try { if(image && typeof image.deleteLater === "function")image.deleteLater(); }catch(e){} }
+        }
+        var source=null,infos=[];
+        function info(path){var value=new DzFileInfo(path);infos.push(value);value.setCaching(false);return value;}
+        try {
+            var directory=info(resourcePath);
+            if(!directory.isAbsolute() || !directory.exists() || !directory.isDir())return fail("error","The WM2 icons directory is unavailable.");
+            var original=info(sourcePath);
+            if(!original.isAbsolute() || !original.exists() || !original.isFile() || !original.isReadable())return fail("error","The selected image is not a readable file.");
+            var name=typeof requestedName === "string" ? requestedName : String(original.fileName());
+            if(!iconBasename(name))return fail("invalid-name","Use a PNG filename without a path or reserved filename (at most 128 characters).");
+            if(!/\.png$/i.test(String(original.fileName())) || !readablePNG(String(original.absoluteFilePath())))return fail("error","Choose a readable PNG image.");
+            var target=String(directory.absoluteFilePath()).replace(/[\/\\]+$/,"")+"/"+name;
+            var destination=info(target);
+            if(destination.exists()) {
+                if(destination.isFile() && samePath(canonical(original),canonical(destination)) && readablePNG(target))return {ok:true,status:"existing",icon:String(destination.fileName()),path:target,message:"Using an existing icon in WM2 Resources."};
+                return {ok:false,status:"collision",icon:null,name:name,message:"An icon named '"+name+"' already exists. Choose a different filename; existing files are never overwritten."};
+            }
+            source=freshFile(String(original.absoluteFilePath()));
+            // DzFile.copy fails if the target exists, including a late collision.
+            if(!source.copy(target)) {
+                destination=info(target);
+                if(destination.exists())return {ok:false,status:"collision",icon:null,name:name,message:"An icon named '"+name+"' appeared during import. Choose a different filename."};
+                return fail("error","The PNG could not be copied into WM2 Resources. "+fileError(source));
+            }
+            destination=info(target);
+            if(!destination.exists() || !destination.isFile() || !destination.isReadable() || destination.size() !== original.size() || !readablePNG(target))return fail("error","The copied PNG could not be verified. The current icon choice was kept.");
+            return {ok:true,status:"imported",icon:name,path:target,message:"Imported "+name+" into WM2 Resources."};
+        } catch(e) { return fail("error","Icon import failed: "+String(e)); }
+        finally { try { if(source && typeof source.deleteLater === "function")source.deleteLater(); }catch(e){} for(var release=0;release<infos.length;release++)try{if(typeof infos[release].deleteLater === "function")infos[release].deleteLater();}catch(e){} }
+    }
+    return {defaults:defaults, validate:validate, load:load, save:save, clone:clone, isIconBasename:iconBasename, importIcon:importIcon};
 })();
 
 (function () {
@@ -304,6 +345,7 @@ iconNodeLabel: function (node) {
 // Literal matching: both edges must be a string edge or an allowed separator.
 containsIconWord: function (value, pattern) {
     if (typeof value != "string" || typeof pattern != "string" || pattern.length == 0) return false;
+    value=value.toLowerCase();pattern=pattern.toLowerCase();
     var offset = 0, index, end;
     while ((index = value.indexOf(pattern, offset)) >= 0) {
         end = index + pattern.length;
@@ -317,17 +359,17 @@ containsIconWord: function (value, pattern) {
 matchIcon: function (rules, node) {
     var none = {matched:false, icon:null, ruleIndex:-1, kind:null, pattern:null};
     if (!node || !Array.isArray(rules)) return none;
-    var name = this.iconNodeName(node), label = this.iconNodeLabel(node);
+    var name = this.iconNodeName(node).toLowerCase(), label = this.iconNodeLabel(node).toLowerCase();
     var exactLabel = this.normalizeCopyLabel(label), best = null;
     for (var i = 0; i < rules.length; i++) {
         var rule = rules[i];
         if (!rule || typeof rule.pattern != "string" || rule.pattern.length == 0 || typeof rule.icon != "string" || rule.icon.length == 0) continue;
         var rank = 2, length = 0, fieldRank = 0, matched = false;
         if (rule.kind == "exactName") {
-            rank = 0; matched = name == rule.pattern;
+            rank = 0; matched = name == rule.pattern.toLowerCase();
         } else if (rule.kind == "exactLabel") {
             rank = 1;
-            var pattern = this.normalizeCopyLabel(rule.pattern);
+            var pattern = this.normalizeCopyLabel(rule.pattern).toLowerCase();
             matched = pattern.length > 0 && exactLabel == pattern;
         } else if (rule.kind == "labelWord") {
             length = rule.pattern.length; fieldRank = 0;
@@ -338,10 +380,10 @@ matchIcon: function (rules, node) {
         } else if (rule.kind == "labelPrefix") {
             // Legacy rules retain their original literal prefix behavior.
             rank = 3; length = rule.pattern.length; fieldRank = 0;
-            matched = label.indexOf(rule.pattern) == 0;
+            matched = label.indexOf(rule.pattern.toLowerCase()) == 0;
         } else if (rule.kind == "namePrefix") {
             rank = 3; length = rule.pattern.length; fieldRank = 1;
-            matched = name.indexOf(rule.pattern) == 0;
+            matched = name.indexOf(rule.pattern.toLowerCase()) == 0;
         } else continue;
         if (!matched) continue;
         if (!best || rank < best.rank || (rank == best.rank && rank >= 2 && (length > best.length || (length == best.length && fieldRank < best.fieldRank)))) {
@@ -351,18 +393,64 @@ matchIcon: function (rules, node) {
     return best ? {matched:true, icon:best.icon, ruleIndex:best.ruleIndex, kind:best.kind, pattern:best.pattern} : none;
 },
 
+// Host lists are indexed collections, not necessarily native JavaScript Arrays.
+iconNodeCollection: function (nodes, limit) {
+    if(nodes === null || typeof nodes === "undefined")nodes=[];
+    var cap=typeof limit === "number" && isFinite(limit)?Math.max(0,Math.min(2000,Math.floor(limit))):2000;
+    var rows=[],total;
+    try {
+        total=nodes.length;
+        if(typeof total!=="number" || !isFinite(total) || total<0 || Math.floor(total)!==total || total>2147483647)throw new Error("Node list has no valid indexed length.");
+        for(var i=0;i<Math.min(total,cap);i++)rows.push(nodes[i]);
+        return {ok:true,nodes:rows,total:total,truncated:rows.length<total,message:""};
+    }catch(e){return {ok:false,nodes:[],total:0,truncated:false,message:String(e)};}
+},
+
+iconSceneNodes: function (scene, selectedOnly, limit) {
+    var cap=typeof limit === "number" && isFinite(limit)?Math.max(0,Math.min(2000,Math.floor(limit))):2000;
+    try {
+        var counter=selectedOnly?"getNumSelectedNodes":"getNumNodes",getter=selectedOnly?"getSelectedNode":"getNode",list=selectedOnly?"getSelectedNodeList":"getNodeList";
+        if(typeof scene[counter]==="function" && typeof scene[getter]==="function") {
+            var total=scene[counter](),nodes=[];
+            if(typeof total!=="number" || !isFinite(total) || total<0 || Math.floor(total)!==total || total>2147483647)throw new Error("Scene node count is unavailable.");
+            for(var i=0;i<Math.min(total,cap);i++)nodes.push(scene[getter](i));
+            return {ok:true,nodes:nodes,total:total,truncated:nodes.length<total,message:""};
+        }
+        if(typeof scene[list]!=="function")throw new Error("Scene node enumeration is unavailable.");
+        var values=scene[list]();if(values===null || typeof values==="undefined")throw new Error("Scene returned no node collection.");
+        return this.iconNodeCollection(values,cap);
+    }catch(e){return {ok:false,nodes:[],total:0,truncated:false,message:String(e)};}
+},
+
+isIconNode: function (node) {
+    try {
+        if(!node)return false;
+        // Main-figure ownership is not an icon eligibility requirement.
+        if(typeof node.inherits==="function")return node.inherits("DzNode") && !node.inherits("DzBone");
+        return typeof node.getLabel==="function" || typeof node.name==="string" || typeof node.label==="string";
+    }catch(e){return false;}
+},
+
+iconSelection: function (scene) {
+    var result=this.iconSceneNodes(scene,true,2);
+    if(!result.ok)return {ok:false,node:null,total:0,message:"Selection unavailable: "+result.message};
+    if(result.total!==1)return {ok:false,node:null,total:result.total,message:result.total>1?result.total+" scene objects selected. Select exactly one to use its name or label.":"Select one scene object to use its name or label. Manual rules and Preview Scene are still available."};
+    if(!this.isIconNode(result.nodes[0]))return {ok:false,node:null,total:1,message:"Select one scene object, rather than a bone or unavailable item."};
+    return {ok:true,node:result.nodes[0],total:1,message:""};
+},
+
 previewIconRules: function (rules, nodes, limit) {
     var cap = typeof limit == "number" && isFinite(limit) ? Math.floor(limit) : 200;
     cap = Math.max(0, Math.min(2000, cap));
-    if (!Array.isArray(nodes)) nodes = [];
-    var rows = [], matched = 0, count = Math.min(nodes.length, cap);
-    for (var i = 0; i < count; i++) {
-        var name = this.iconNodeName(nodes[i]), label = this.iconNodeLabel(nodes[i]);
+    var collection=this.iconNodeCollection(nodes,cap),rows=[],matched=0;
+    if(!collection.ok)return {ok:false,message:collection.message,rows:rows,scanned:0,matched:0,total:0,truncated:false,limit:cap};
+    for (var i = 0; i < collection.nodes.length; i++) {
+        var name = this.iconNodeName(collection.nodes[i]), label = this.iconNodeLabel(collection.nodes[i]);
         var result = this.matchIcon(rules, {name:name, label:label});
         if (result.matched) matched++;
         rows.push({nodeIndex:i, name:name, label:label, normalizedLabel:this.normalizeCopyLabel(label), match:result});
     }
-    return {rows:rows, scanned:count, matched:matched, total:nodes.length, truncated:count < nodes.length, limit:cap};
+    return {ok:true,message:"",rows:rows,scanned:rows.length,matched:matched,total:collection.total,truncated:rows.length<collection.total,limit:cap};
 }
 
 };
