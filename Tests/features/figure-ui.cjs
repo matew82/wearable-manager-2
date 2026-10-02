@@ -134,6 +134,19 @@ function rejectDraft(environment, value, fragment) {
     if (result.config) assert.deepEqual(plain(result.config), before, 'No partial additions may be returned');
     noSceneWrites(environment);
 }
+function horseConfig(children, registered = true) {
+    const value = config(); value.supportedFigures = registered ? ['DAZHorse2'] : [];
+    value.protectedChildren = children === null ? [] : [{figure: 'DAZHorse2', children: children.slice()}];
+    return value;
+}
+function horseFixture(tailType = 'DzFigure', fitted = false, aliases = true) {
+    const graph = graphFixture(aliases), figure = graph.figure('DAZHorse2'), hip = graph.add('hip', 'DzBone', figure);
+    const tail = graph.add('DAZHorse2Tail', tailType, hip); tail.label = 'Tail';
+    if (fitted) tail.follow = figure;
+    const tailBone = tailType === 'DzFigure' ? graph.add('tailBone', 'DzBone', tail) : null;
+    const ribbon = graph.add('TailRibbon', 'DzNode', tailBone || tail), accessory = graph.add('HorseAccessory', 'DzNode', hip);
+    return {graph, figure, hip, tail, tailBone, ribbon, accessory, names: ['DAZHorse2Tail', 'TailRibbon', 'HorseAccessory']};
+}
 
 test('reused prefixes define helpers without constructing dialogs or accessing IO', () => {
     const environment = ui.environment();
@@ -260,14 +273,14 @@ for (const aliases of [false, true]) test('bulk bone-attached/nested selection a
     assert.equal(result.added, 3); assert.equal(result.alreadyProtected, 2); assert.deepEqual(plain(result.skipped), []);
     assert.deepEqual(value, before); noSceneWrites(environment); assert.deepEqual(graph.writes, []);
 });
-test('owner bones foreign profiles and unattached props are skipped with labels and reasons', () => {
+test('own figure/bone expands once while foreign profiles and unattached props are explained', () => {
     const graph = graphFixture(), figure = graph.figure(), bone = graph.add('hip', 'DzBone', figure), foreign = graph.figure('Other'), foreignChild = graph.add('OtherHat', 'DzNode', foreign), prop = graph.add('Loose'), valid = graph.add('Hat', 'DzNode', figure), environment = graph.environment(config(), [figure, bone, foreignChild, prop, valid]), result = bulk(environment);
-    assert(result.ok, result.message); assert.equal(result.added, 1); assert.equal(result.skipped.length, 4);
+    assert(result.ok, result.message); assert.equal(result.added, 1); assert.equal(result.filledOwners, 1); assert.equal(result.skipped.length, 2);
     for (const skip of result.skipped) { assert(skip.label.startsWith('Visible ')); assert(skip.reason.length); }
-    assert(result.message.includes('Skipped 4')); noSceneWrites(environment);
+    assert(result.message.includes('Skipped 2')); noSceneWrites(environment);
 });
 test('all ineligible live selections are explained without altering protection', () => {
-    const graph = graphFixture(), figure = graph.figure(), bone = graph.add('hip', 'DzBone', figure), environment = graph.environment(config(), [figure, bone]), result = bulk(environment);
+    const graph = graphFixture(), figure = graph.figure('Foreign'), bone = graph.add('hip', 'DzBone', figure), environment = graph.environment(config(), [figure, bone]), result = bulk(environment);
     assert(result.ok); assert.equal(result.added, 0); assert.deepEqual(plain(result.config), config()); assert.equal(result.skipped.length, 2); noSceneWrites(environment);
 });
 test('empty selection rejects with clear guidance', () => {
@@ -309,11 +322,97 @@ for (const name of ['Custom', 'Genesis9']) test('new ' + name + ' registration s
 });
 for (const name of ['Custom', 'Genesis9']) for (const children of [[], ['Customized']]) test(name + ' registration preserves existing ' + (children.length ? 'customized' : 'empty') + ' profile', () => {
     const graph = graphFixture(), figure = graph.figure(name); graph.add('NewAttached', 'DzNode', figure);
-    const value = config(); value.supportedFigures = []; value.protectedChildren = [{figure: name, children}];
+    const value = config(); value.supportedFigures = [name]; value.protectedChildren = [{figure: name, children}];
     const environment = graph.environment(value, [figure]), result = environment.support.addSupportedFigure(value, figure);
     assert(result.ok, result.message); assert.deepEqual(plain(result.config.protectedChildren), value.protectedChildren); noSceneWrites(environment);
 });
 
+for (const name of ['Custom', 'Genesis9']) for (const children of [[], ['Customized']]) test('NEW ' + name + ' registration merges descendants into an existing ' + (children.length ? 'partial' : 'empty') + ' profile', () => {
+    const graph = graphFixture(true), figure = graph.figure(name); graph.add('NewAttached', 'DzNode', figure);
+    const value = config(); value.supportedFigures = []; value.protectedChildren = [{figure: name, children}];
+    const before = plain(value), environment = graph.environment(value, [figure]), result = environment.support.addSupportedFigure(value, graph.alias(figure));
+    assert(result.ok, result.message); assert.deepEqual(plain(result.config.protectedChildren), [{figure: name, children: children.concat('NewAttached')}]);
+    assert.deepEqual(value, before); noSceneWrites(environment); assert.deepEqual(graph.writes, []);
+});
+for (const [tailType, fitted] of [['DzNode', false], ['DzFigure', false], ['DzFigure', true]]) for (const profile of ['missing', 'empty', 'partial']) test('NEW Horse registration protects visible Tail/internal DAZHorse2Tail: ' + tailType + '/' + fitted + '/' + profile, () => {
+    const horse = horseFixture(tailType, fitted), children = profile === 'missing' ? null : profile === 'empty' ? [] : ['SavedOnly', 'DAZHorse2Tail'];
+    const value = horseConfig(children, false), before = plain(value), environment = horse.graph.environment(value, [horse.figure]);
+    const result = environment.support.addSupportedFigure(value, horse.graph.alias(horse.figure));
+    assert(result.ok, result.message); const names = plain(result.config.protectedChildren[0].children);
+    assert.deepEqual(names.slice(0, (children || []).length), children || []);
+    assert.deepEqual(names.slice().sort(), Array.from(new Set((children || []).concat(horse.names))).sort());
+    assert(!names.includes('Tail')); assert(!names.includes('hip')); assert(!names.includes('tailBone'));
+    assert.deepEqual(value, before); noSceneWrites(environment); assert.deepEqual(horse.graph.writes, []);
+});
+test('registered Horse missing-profile bootstrap protects all current nonbone descendants', () => {
+    const horse = horseFixture(), value = horseConfig(null), environment = horse.graph.environment(value, [horse.figure]);
+    const result = environment.support.addSupportedFigure(value, horse.graph.alias(horse.figure));
+    assert(result.ok, result.message); assert.deepEqual(plain(result.config.protectedChildren[0].children).sort(), horse.names.slice().sort()); noSceneWrites(environment);
+});
+for (const children of [[], ['DAZHorse2Tail']]) test('already registered Horse preserves intentional ' + (children.length ? 'partial' : 'empty') + ' protection on re-add', () => {
+    const horse = horseFixture(), value = horseConfig(children), before = plain(value), environment = horse.graph.environment(value, [horse.figure]);
+    const result = environment.support.addSupportedFigure(value, horse.graph.alias(horse.figure));
+    assert(result.ok, result.message); assert.deepEqual(plain(result.config), before); noSceneWrites(environment);
+});
+for (const selectedBone of [false, true]) test('Horse ' + (selectedBone ? 'own bone' : 'figure') + ' fills partial protection with all attached names', () => {
+    const horse = horseFixture('DzFigure', true), value = horseConfig(['SavedOnly', 'DAZHorse2Tail']), environment = horse.graph.environment(value, [selectedBone ? horse.hip : horse.figure]);
+    const before = plain(value), result = bulk(environment, value, 'DAZHorse2');
+    assert(result.ok, result.message); assert.equal(result.filledOwners, 1); assert.equal(result.added, 2);
+    assert.deepEqual(plain(result.children).sort(), ['SavedOnly'].concat(horse.names).sort()); assert.deepEqual(plain(result.skipped), []);
+    assert.deepEqual(value, before); noSceneWrites(environment); assert.deepEqual(horse.graph.writes, []);
+});
+test('duplicate Horse figure/own-bone selections expand one live owner exactly once', () => {
+    const horse = horseFixture(), value = horseConfig([]), environment = horse.graph.environment(value, [horse.figure, horse.hip, horse.figure, horse.hip]);
+    const result = bulk(environment, value, 'DAZHorse2'); assert(result.ok, result.message);
+    assert.equal(result.filledOwners, 1); assert.equal(result.added, horse.names.length); assert.equal(result.alreadyProtected, 0);
+    assert.deepEqual(plain(result.children).sort(), horse.names.slice().sort()); noSceneWrites(environment);
+});
+test('same-type Horse owner copies share one profile but each owner fills once', () => {
+    const horse = horseFixture(), second = horse.graph.figure('DAZHorse2'), bone = horse.graph.add('copyHip', 'DzBone', second);
+    horse.graph.add('HorseMane', 'DzNode', bone);
+    const value = horseConfig([]), environment = horse.graph.environment(value, [horse.figure, second, bone]), result = bulk(environment, value, 'DAZHorse2');
+    assert(result.ok, result.message); assert.equal(result.filledOwners, 2); assert.equal(result.added, 4);
+    assert.deepEqual(plain(result.children).sort(), horse.names.concat('HorseMane').sort()); noSceneWrites(environment);
+});
+test('foreign figure/bone are explained while mixed Horse child selection stays individual', () => {
+    const horse = horseFixture(), foreign = horse.graph.figure('Dragon'), foreignBone = horse.graph.add('dragonHip', 'DzBone', foreign);
+    horse.graph.add('ForeignTail', 'DzNode', foreignBone);
+    const value = horseConfig([]), environment = horse.graph.environment(value, [foreign, foreignBone, horse.tail]), result = bulk(environment, value, 'DAZHorse2');
+    assert(result.ok, result.message); assert.equal(result.filledOwners, 0); assert.equal(result.added, 1);
+    assert.deepEqual(plain(result.children), ['DAZHorse2Tail']); assert.equal(result.skipped.length, 2);
+    for (const item of result.skipped) { assert(item.label); assert(item.reason.includes('DAZHorse2')); }
+    noSceneWrites(environment);
+});
+test('individual nested Tail selection does not implicitly protect its siblings or descendants', () => {
+    const horse = horseFixture('DzFigure', true), value = horseConfig([]), environment = horse.graph.environment(value, [horse.ribbon]);
+    const result = bulk(environment, value, 'DAZHorse2'); assert(result.ok, result.message);
+    assert.equal(result.filledOwners, 0); assert.deepEqual(plain(result.children), ['TailRibbon']); noSceneWrites(environment);
+});
+for (const selectedBone of [false, true]) test('Horse child editor expands ' + (selectedBone ? 'bone' : 'figure') + ' only on explicit bulk Add after removal', () => {
+    const horse = horseFixture(), value = horseConfig(['DAZHorse2Tail']), environment = horse.graph.environment(value, [selectedBone ? horse.hip : horse.figure]);
+    environment.g.steps = [() => {
+        last(environment, 'DzListBox').setSelected(0, true); click(environment, 'Remove Protection');
+        assert.deepEqual(plain(last(environment, 'DzListBox').items), []);
+        click(environment, 'Add Selected Children'); assert.deepEqual(plain(last(environment, 'DzListBox').items).sort(), horse.names.slice().sort()); return true;
+    }];
+    const result = childDialog(environment, value, 'DAZHorse2'); assert(result.saved);
+    assert.deepEqual(plain(result.config.protectedChildren[0].children).sort(), horse.names.slice().sort()); assert.equal(environment.g.saved.length, 0); noSceneWrites(environment);
+});
+test('selected Horse figure does not refill a removal on Save without explicit Add', () => {
+    const horse = horseFixture(), value = horseConfig(['DAZHorse2Tail']), environment = horse.graph.environment(value, [horse.figure]);
+    environment.g.steps = [() => { last(environment, 'DzListBox').setSelected(0, true); click(environment, 'Remove Protection'); return true; }];
+    assert.deepEqual(plain(childDialog(environment, value, 'DAZHorse2').config.protectedChildren[0].children), []); noSceneWrites(environment);
+});
+for (const fault of ['missing membership', 'duplicate membership', 'stale child', 'changed child parent']) test('Horse owner expansion ' + fault + ' rejects the entire mixed batch', () => {
+    const horse = horseFixture('DzFigure', true, false), value = horseConfig([]), environment = horse.graph.environment(value, [horse.accessory, horse.figure]);
+    if (fault === 'missing membership') horse.graph.overrides.set(horse.hip, [horse.accessory]);
+    if (fault === 'duplicate membership') horse.graph.overrides.set(horse.hip, [horse.tail, horse.tail, horse.accessory]);
+    if (fault === 'stale child') environment.g.nodes = environment.g.nodes.filter(node => node !== horse.tail);
+    if (fault === 'changed child parent') { horse.graph.overrides.set(horse.hip, [horse.tail, horse.accessory]); horse.tail.parent = null; }
+    const before = plain(value), result = bulk(environment, value, 'DAZHorse2');
+    assert.equal(result.ok, false, result.message); assert.deepEqual(value, before);
+    if (result.config) assert.deepEqual(plain(result.config), before); noSceneWrites(environment);
+});
 for (const names of [[], ['Genesis9', 'Custom'], ['Genesis10', 'Genesis10Female', ' Wolf ']]) {
     test('schema1 migration preserves exact saved names ' + JSON.stringify(names), () => {
         const legacy = {schema: 1, iconRules: [{kind: 'labelPrefix', pattern: 'Hair', icon: 'A.PNG'}], supportedFigures: names};

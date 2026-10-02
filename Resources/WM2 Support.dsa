@@ -818,7 +818,8 @@ function WM2InstallSupportedFigures(oSupport) {
             if (typeof oSupport.validate !== "function" || typeof oSupport.clone !== "function") throw new Error("Supported-figure configuration services are unavailable.");
             var oValidated = oSupport.validate(oConfig);
             if (!oValidated.ok) return { ok: false, config: oConfig, message: oValidated.message, figure: null };
-            oFigure = selected(oNode, sceneNodes());
+            var nodes=sceneNodes();
+            oFigure = selected(oNode, nodes);
             if (!oFigure) return { ok: false, config: oConfig, message: "Select a live independent figure or one of its bones. A fitted wearable or attached figure cannot be registered as an owner.", figure: null };
             var sName = internalName(oFigure);
             if (!sName) return { ok: false, config: oConfig, message: "The figure must have a nonempty internal name.", figure: oFigure };
@@ -826,20 +827,15 @@ function WM2InstallSupportedFigures(oSupport) {
             if (!bExisting) oNext.supportedFigures.push(sName);
             var seeded=0,hasProfile=false;
             for(var p=0;p<oNext.protectedChildren.length;p++)if(oNext.protectedChildren[p].figure===sName)hasProfile=true;
-            if(!hasProfile && (arrBuiltInNames.indexOf(sName)<0 || !bExisting)) {
-                var nodes=sceneNodes(),children=[],seen={};
-                if(!nodes || nodes.length>20000)throw new Error("Cannot safely enumerate this figure's attached children.");
-                validateSubtree(oFigure,nodes);
-                for(var c=0;c<nodes.length;c++) {
-                    var child=live(nodes[c],nodes);
-                    if(!child)throw new Error("Scene contains ambiguous or unavailable node identities.");
-                    if(same(child,oFigure) || child.inherits("DzBone"))continue;
-                    if(!below(child,oFigure,nodes))continue;
-                    var childName=internalName(child);
-                    if(!childName)throw new Error("An attached child has no readable internal name; registration was not applied.");
-                    if(!Object.prototype.hasOwnProperty.call(seen,"_"+childName)){seen["_"+childName]=true;children.push(childName);}
-                }
-                oNext.protectedChildren.push({figure:sName,children:children});seeded=children.length;
+            // Explicit new registration fills current attachments even when a
+            // profile was saved before registration or retained after removal.
+            // Already registered edited profiles remain unchanged.
+            if(!bExisting || (!hasProfile && arrBuiltInNames.indexOf(sName)<0)) {
+                var children=oSupport.protectedChildNames(oNext,sName),attached=attachedProtectedNames(oFigure,nodes);
+                for(var c=0;c<attached.length;c++)if(children.indexOf(attached[c])<0){children.push(attached[c]);seeded++;}
+                var updated=oSupport.setProtectedChildNames(oNext,sName,children);
+                if(!updated.ok)return {ok:false,config:oConfig,message:updated.message,figure:oFigure};
+                oNext=updated.config;
             }
             var oFinal = oSupport.validate(oNext);
             if (!oFinal.ok) return { ok: false, config: oConfig, message: oFinal.message, figure: oFigure };
@@ -904,6 +900,31 @@ function WM2InstallSupportedFigures(oSupport) {
                 queue.push(child);
             }
         }
+        return seen;
+    }
+    function attachedProtectedNames(root,nodes) {
+        if(!nodes || nodes.length>20000)throw new Error("Cannot safely enumerate this figure's attached children.");
+        var subtree=validateSubtree(root,nodes),members={},names=[],seenNames={};
+        for(var i=0;i<subtree.length;i++){
+            var identity=key(subtree[i]);
+            members["_"+identity.type.length+":"+identity.type+identity.id]=true;
+        }
+        // Preserve Scene order, accept indexed host collections, and verify both
+        // directions of membership rather than trusting names or FitTo alone.
+        for(var n=0;n<nodes.length;n++){
+            var child=live(nodes[n],nodes);
+            if(!child)throw new Error("Scene contains ambiguous or unavailable node identities.");
+            if(same(child,root) || !below(child,root,nodes))continue;
+            var childKey=key(child),token="_"+childKey.type.length+":"+childKey.type+childKey.id;
+            if(!Object.prototype.hasOwnProperty.call(members,token))throw new Error("Child membership changed; no protection was added.");
+            // Intrinsic bones are immovable already. A prop, fitted figure or
+            // nested attachment named Tail is included like any other child.
+            if(child.inherits("DzBone"))continue;
+            var name=internalName(child);
+            if(!name)throw new Error("An attached child has no readable internal name; no protection was added.");
+            if(!Object.prototype.hasOwnProperty.call(seenNames,"_"+name)){seenNames["_"+name]=true;names.push(name);}
+        }
+        return names;
     }
     oSupport.figureInternalName=internalName;
     oSupport.protectedChildNames=function(config,figureName) {
@@ -927,12 +948,25 @@ function WM2InstallSupportedFigures(oSupport) {
             var selectedNodes=oSupport.iconSceneNodes(scene || Scene,true,2000);
             if(!selectedNodes.ok)throw new Error("The current selection is unavailable.");
             if(selectedNodes.truncated)throw new Error("Select at most 2,000 children at once.");
-            if(!selectedNodes.total)return {ok:false,config:config,message:"Select attached children in Scene, then Add Selected Children."};
-            var nodes=sceneNodes(scene),children=oSupport.protectedChildNames(checked.config,figureName),added=0,already=0,skipped=[];
+            if(!selectedNodes.total)return {ok:false,config:config,message:"Select attached children, their supported figure or one of its bones in Scene, then Add Selected Children."};
+            var nodes=sceneNodes(scene),children=oSupport.protectedChildNames(checked.config,figureName),added=0,already=0,skipped=[],filled=[];
             if(!nodes)throw new Error("Scene children are unavailable.");
+            function addName(name){if(children.indexOf(name)>=0)already++;else{children.push(name);added++;}}
             for(var n=0;n<selectedNodes.nodes.length;n++) {
                 var node=live(selectedNodes.nodes[n],nodes),current=node,owner=null,seen=[];
                 if(!node)throw new Error("A selected child is unavailable or has an ambiguous identity; no protection was added.");
+                var selectedOwner=selected(node,nodes);
+                if(selectedOwner){
+                    if(!supported(selectedOwner,checked.config,nodes) || internalName(selectedOwner)!==figureName){skipped.push({label:oSupport.iconNodeLabel(node),reason:"not the supported owner of "+figureName});continue;}
+                    var alreadyFilled=false;
+                    for(var f=0;f<filled.length;f++)if(same(filled[f],selectedOwner))alreadyFilled=true;
+                    if(!alreadyFilled){
+                        var namesToAdd=attachedProtectedNames(selectedOwner,nodes);
+                        for(var a=0;a<namesToAdd.length;a++)addName(namesToAdd[a]);
+                        filled.push(selectedOwner);
+                    }
+                    continue;
+                }
                 if(node.inherits("DzBone")){skipped.push({label:oSupport.iconNodeLabel(node),reason:"bone; always stays attached"});continue;}
                 while(current) {
                     if(seen.length>=nodes.length)throw new Error("Child ancestry contains a cycle; no protection was added.");
@@ -954,15 +988,15 @@ function WM2InstallSupportedFigures(oSupport) {
                 }
                 if(!owner||same(owner,node)||internalName(owner)!==figureName){skipped.push({label:oSupport.iconNodeLabel(node),reason:"not an attached child of "+figureName});continue;}
                 var name=internalName(node);if(!name)throw new Error("A selected child has no readable internal name; no protection was added.");
-                if(children.indexOf(name)>=0)already++;
-                else {children.push(name);added++;}
+                addName(name);
             }
             var result=oSupport.setProtectedChildNames(checked.config,figureName,children);
             if(!result.ok)return {ok:false,config:config,message:result.message};
-            var message=added?"Added protection for "+added+" selected child name"+(added===1?"":"s")+".":"No new protection was added.";
+            var message=added?"Added protection for "+added+" current child name"+(added===1?"":"s")+".":"No new protection was added.";
+            if(filled.length)message+=" Filled missing attachments from "+filled.length+" selected figure"+(filled.length===1?"":"s")+" or their bones.";
             if(already)message+=" Already protected: "+already+".";
             if(skipped.length){message+=" Skipped "+skipped.length+" selection"+(skipped.length===1?"":"s")+": ";for(var k=0;k<Math.min(8,skipped.length);k++)message+=(k?"; ":"")+skipped[k].label+" ("+skipped[k].reason+")";if(skipped.length>8)message+="; more selections outside this profile";}
-            return {ok:true,config:result.config,children:children.slice(0),added:added,alreadyProtected:already,skipped:skipped,message:message};
+            return {ok:true,config:result.config,children:children.slice(0),added:added,alreadyProtected:already,filledOwners:filled.length,skipped:skipped,message:message};
         }catch(e){return {ok:false,config:config,message:"Protected selection could not be added: "+String(e)};}
     };
     oSupport.isProtectedTransfer=function(node,owner,config,knownNodes) {
