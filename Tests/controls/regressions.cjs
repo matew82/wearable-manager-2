@@ -30,6 +30,7 @@ function config(file,folder,text) {
   const context={PATH_ICONS:'/Resources',JSON_NAME:'Wearables Manager.json',ICONS_EXTENSION:'.PNG',
     DzDir:function(){this.filePath=n=>'/Resources/'+n;this.deleteLater=()=>dirsDeleted++;},DzFile:File,Pixmap:function(filePath){this.path=filePath;}};
   vm.createContext(context);
+  if(source.includes('WM2Support.createIconResolver'))vm.runInContext(fs.readFileSync(path.join(integratedRoot||path.resolve(__dirname,'../..'),'Resources/WM2 Support.dsa'),'utf8'),context);
   vm.runInContext(source.slice(source.indexOf('function WearablesIconsClass('),source.indexOf('function TagImageManagerClass(')),context);
   const icons=new context.WearablesIconsClass();
   let icon,error=null;

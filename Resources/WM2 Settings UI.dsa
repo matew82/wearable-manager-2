@@ -197,16 +197,28 @@ function WM2SettingsModel(support, resourcePath, firstIcon) {
     };
     model.clear();return model;
 }
-function WM2SettingsPreviewText(result) {
-    if(!result || result.ok===false)return "Preview unavailable: "+(result&&result.message?String(result.message):"No preview data was returned.");
-    var lines=["Matched "+result.matched+" of "+result.scanned+" scanned scene items"+(result.truncated?" (limited to "+result.limit+" of "+result.total+")":"")+"."];
-    if(result.scanned===0)lines.push("The scene is empty; there are no items to preview.");
-    else if(result.matched===0)lines.push("No icon rule matches these items. Their automatic icons remain in use.");
-    for(var i=0;i<result.rows.length;i++){
-        var row=result.rows[i],match=row.match;
-        lines.push((row.name||"<unnamed>")+" | "+(row.label||"<unlabeled>")+" -> "+(match&&match.matched?match.icon+" (rule "+(match.ruleIndex+1)+", "+WM2SettingsKindLabel(match.kind)+")":"automatic icon"));
+function WM2SettingsRenderMenuPreview(scroll,result) {
+    var body=new DzWidget(scroll),layout=new DzVBoxLayout(body),metrics=WM2SettingsMetrics(body);
+    layout.margin=metrics.margin;layout.spacing=metrics.spacing;
+    if(result.title)layout.addWidget(WM2SettingsPlainLabel(body,result.title));
+    if(result.message)layout.addWidget(WM2SettingsPlainLabel(body,result.message));
+    var sourceRows=result.rows||[],rows=[],stored=[],section="";
+    for(var r=0;r<sourceRows.length;r++)(sourceRows[r].isInGroup?stored:rows).push(sourceRows[r]);
+    rows=rows.concat(stored);
+    for(var i=0;i<rows.length;i++){
+        var item=rows[i],next=item.isInGroup?"Stored":"On figure";
+        if(result.title!=="Selected item"&&next!==section){layout.addWidget(WM2SettingsPlainLabel(body,next));section=next;}
+        var row=WM2SettingsRow(body,layout),image=new DzPushButton(row.widget);
+        image.text="";image.buttonStyle=DzPushButton.BTool;image.sizedFromIcon=true;image.minWidth=91;image.minHeight=91;
+        image.toolTip=item.usable?item.label:"Icon unavailable";
+        WM2Support.setMenuPixmap(image,item.pixmap);row.layout.addWidget(image);
+        var label=WM2SettingsPlainLabel(row.widget,(item.parentLabel?item.parentLabel+" > ":"")+item.label);
+        label.font=WM2SettingsFont(label,false);label.font.bold=true;row.layout.addWidget(label,1);
+        if(!item.usable)row.layout.addWidget(WM2SettingsPlainLabel(row.widget,"Icon unavailable"));
+        row.layout.margin=Math.min(10,item.depth)*16;
+        // Images deliberately have no click connection or transfer controls.
     }
-    return lines.join("\n");
+    scroll.setWidget(body);scroll.wm2Preview=result;
 }
 function WM2SettingsPromptIconName(parent, currentName) {
     var dialog=new DzBasicDialog();dialog.caption="Choose another icon filename";
@@ -217,7 +229,7 @@ function WM2SettingsPromptIconName(parent, currentName) {
     try { return dialog.exec()?String(filename.text):null; }
     finally { dialog.deleteLater(); }
 }
-function WM2ShowIconRules(resourcePath) {
+function WM2ShowIconRules(resourcePath,getPreviewContext) {
     var support=WM2Support,icons=[],iconError="";
     try { icons=WM2SettingsIcons(resourcePath); } catch(e) { iconError="Icon listing failed: "+String(e); }
     var model=WM2SettingsModel(support,resourcePath,icons.length?icons[0]:""),ui=WM2SettingsDialog("Wearables Manager - Icon Rules",resourcePath),dialog=ui.dialog,content=ui.content,layout=ui.layout,metrics=ui.metrics;
@@ -234,8 +246,9 @@ function WM2ShowIconRules(resourcePath) {
     actions.layout.addWidget(clearDraft);actions.layout.addWidget(add);actions.layout.addWidget(update);actions.layout.addWidget(remove);
     var useName=WM2SettingsButton(selectionActions.widget,"Use Selected Name",resourcePath,"Wearables Manager - Prop.png"),useLabel=WM2SettingsButton(selectionActions.widget,"Use Selected Label",resourcePath,"Wearables Manager - Prop.png");selectionActions.layout.addWidget(useName);selectionActions.layout.addWidget(useLabel);
     var up=WM2SettingsButton(moving.widget,"Move Up",resourcePath,"Wearables Manager - Arrow Left.png",true),down=WM2SettingsButton(moving.widget,"Move Down",resourcePath,"Wearables Manager - Arrow Right.png",true),previewButton=WM2SettingsButton(moving.widget,"Preview Scene",resourcePath,"Wearables Manager - Group.png");moving.layout.addWidget(up);moving.layout.addWidget(down);moving.layout.addWidget(previewButton);
-    layout.addWidget(WM2SettingsPlainLabel(content,"Results show the selected item or a scene sample. Preview Scene scans up to 2,000 scene nodes and includes a valid current form as an unsaved candidate. It changes no nodes and saves no settings. Legacy prefix forms are read-only; use Clear Draft for a new rule."));
-    var preview=new DzTextEdit(content);preview.readOnly=true;preview.acceptRichText=false;preview.minHeight=metrics.previewHeight;layout.addWidget(preview,1);layout.addWidget(status);
+    layout.addWidget(WM2SettingsPlainLabel(content,"Preview shows the selected item with its Menu icon. Preview Scene shows that item's figure and its Menu items. Valid draft edits are included. Legacy prefix forms are read-only; use Clear Draft for a new rule."));
+    var preview=new DzScrollArea(content);preview.widgetResizable=true;preview.minHeight=Math.max(180,metrics.previewHeight);layout.addWidget(preview,1);layout.addWidget(status);
+    var previewWholeFigure=false,iconResolver=support.createIconResolver(resourcePath,function(){return model.config.iconRules;});
     function say(text){status.text=String(text);}
     function refreshSelection(){
         selection=support.iconSelection(Scene);
@@ -248,21 +261,19 @@ function WM2ShowIconRules(resourcePath) {
     function capture(){if(!populating&&!WM2SettingsIsLegacyKind(model.form.kind)){model.setForm({kind:kinds[kind.currentItem]||"exactName",pattern:String(pattern.text),icon:iconValues[icon.currentItem]||""});refreshSelection();}}
     function renderPreview(wholeScene, includeForm){
         try {
-            var rules=support.clone(model.config.iconRules),note="";
-            if(includeForm && model.form.pattern && model.form.icon && !WM2SettingsIsLegacyKind(model.form.kind)) {
-                var next=support.clone(model.config),index=model.active>=0?model.active:next.iconRules.length;next.iconRules[index]=support.clone(model.form);
+            if(typeof wholeScene==="boolean")previewWholeFigure=wholeScene;
+            var next=support.clone(model.config),note="";
+            if(includeForm && model.dirty() && model.form.pattern && model.form.icon && !WM2SettingsIsLegacyKind(model.form.kind)) {
+                var index=model.active>=0?model.active:next.iconRules.length;next.iconRules[index]=support.clone(model.form);
                 var checked=WM2SettingsValidate(support,next);
-                if(checked.ok){rules=checked.config.iconRules;note="Current form included as an unsaved candidate.\n";}
-                else note="Current form is not included: "+checked.message+"\n";
+                if(checked.ok)next=checked.config;
+                else {next=support.clone(model.config);note="Draft is invalid; preview keeps the rule list.";}
             }
-            var current=selection || support.iconSelection(Scene),nodes;
-            if(!wholeScene && current.ok)nodes={ok:true,nodes:[current.node],total:1,truncated:false};
-            else nodes=support.iconSceneNodes(Scene,false,wholeScene?2000:200);
-            if(!nodes.ok){preview.plainText=note+"Preview unavailable: "+nodes.message;return;}
-            var result=support.previewIconRules(rules,nodes.nodes,wholeScene?2000:200);
-            result.total=nodes.total;result.truncated=result.scanned<nodes.total;
-            preview.plainText=note+WM2SettingsPreviewText(result);
-        }catch(e){preview.plainText="Preview unavailable: "+String(e);}
+            var context=typeof getPreviewContext==="function"?getPreviewContext():null;
+            var result=support.previewMenu(Scene,next,iconResolver,previewWholeFigure,context);
+            if(note)result.message=note+(result.message?" "+result.message:"");
+            WM2SettingsRenderMenuPreview(preview,result);
+        }catch(e){WM2SettingsRenderMenuPreview(preview,{ok:false,message:"Preview unavailable: "+String(e),rows:[]});}
     }
     function populate(){populating=true;try{
         list.clear();for(var n=0;n<model.config.iconRules.length;n++){var rule=model.config.iconRules[n];list.insertItem((n+1)+". "+WM2SettingsKindLabel(rule.kind)+" | "+rule.pattern+" -> "+rule.icon);}
@@ -275,7 +286,7 @@ function WM2ShowIconRules(resourcePath) {
         update.enabled=hasSelection&&canEdit;remove.enabled=hasSelection;up.enabled=hasSelection&&model.active>0;down.enabled=hasSelection&&model.active<model.config.iconRules.length-1;
     }finally{populating=false;}refreshSelection();renderPreview(false,false);}
     function perform(fn,clear){capture();try{var result=fn();if(!result.ok){say(result.message);return;}if(clear)model.clear();populate();say("Draft list updated. Save writes these changes.");}catch(e){say(String(e));}}
-    function edited(){if(populating)return;capture();renderPreview(false,true);}
+    function edited(){if(populating)return;capture();renderPreview(null,true);}
     connect(kind,"currentIndexChanged(int)",edited);connect(pattern,"textChanged(const QString&)",edited);connect(icon,"currentIndexChanged(int)",edited);
     connect(list,"selectionChanged(int)",function(index){if(populating)return;capture();var result=model.select(Number(index));if(!result.ok){populating=true;try{for(var n=0;n<model.config.iconRules.length;n++)list.setSelected(n,false);list.currentItem=model.active;if(model.active>=0)list.setSelected(model.active,true);}finally{populating=false;}say(result.message);return;}populate();});
     connect(clearDraft,"clicked()",function(){perform(model.resetDraft,false);say("Form cleared; no rule was added.");});
@@ -295,7 +306,7 @@ function WM2ShowIconRules(resourcePath) {
         say("Icon import stopped after repeated invalid or conflicting filenames. Current icon kept.");
     }catch(e){say("Icon import failed; current icon kept. "+String(e));}});
     connect(previewButton,"clicked()",function(){capture();renderPreview(true,true);});
-    function selectionChanged(){var current=refreshSelection();if(current.ok)say("Selected: "+support.iconNodeName(current.node)+" | "+support.iconNodeLabel(current.node));renderPreview(false,true);}
+    function selectionChanged(){var current=refreshSelection();if(current.ok)say("Selected: "+support.iconNodeLabel(current.node));renderPreview(null,true);}
     try{connect(Scene,"nodeSelectionListChanged()",selectionChanged);connectedSelection=true;}catch(e){}
     selection=support.iconSelection(Scene);
     if(selection.ok){model.setForm({kind:"exactLabel",pattern:support.iconNodeLabel(selection.node),icon:model.form.icon});model.baseline=JSON.stringify(model.form);}

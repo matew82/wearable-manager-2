@@ -53,8 +53,9 @@ function iconsClass(source,rules,files,withSupport=true,options={}){
   function File(){this.open=mode=>{opens++;return options.shippedJson!==undefined;};this.read=()=>options.shippedJson;this.close=()=>{closes++;};this.write=value=>{writes.push(value);};}File.ReadOnly=1;File.WriteOnly=2;
   const c={PATH_ICONS:'/Resources',JSON_NAME:'Wearables Manager.json',ICONS_EXTENSION:'.PNG',DzDir:Dir,DzFile:File,Pixmap:function(p){if(p==='/Resources/custom.png'&&options.customPixmap==='throw')throw Error('isolated bad PNG constructor');this.path=p;this.width=p==='/Resources/custom.png'&&options.customPixmap==='zero'?0:24;this.height=24;},oWM2Config:{iconRules:rules}};
   if(options.noConfig)delete c.oWM2Config;
-  if(withSupport)c.WM2Support=support;
-  vm.createContext(c);const start=source.indexOf('function WearablesIconsClass('),end=source.indexOf('function TagImageManagerClass(',start);assert(start>=0&&end>start);
+  vm.createContext(c);vm.runInContext('String.prototype.mid=function(start,count){return this.substr(start,count);};',c);vm.runInContext(supportSource,c);
+  if(!withSupport)c.WM2Support.matchIcon=undefined;
+  const start=source.indexOf('function WearablesIconsClass('),end=source.indexOf('function TagImageManagerClass(',start);assert(start>=0&&end>start);
   vm.runInContext(source.slice(start,end),c);return {icons:new c.WearablesIconsClass(),writes,dirs,get opens(){return opens;},get closes(){return closes;}};
 }
 for(const file of ['Wearables Manager Full.dsa','Wearables Manager Menu.dsa']) {
@@ -65,11 +66,27 @@ for(const file of ['Wearables Manager Full.dsa','Wearables Manager Menu.dsa']) {
   for(const mode of ['zero','throw'])test(file+': '+mode+' configured Pixmap uses actual automatic fallback and releases both directories',()=>{const a=iconsClass(overlay.source,[rule('exactLabel','Hair','custom.png')],['custom.png'],true,{customPixmap:mode});assert.equal(a.icons.GetIconForWearable(node('Camera','Hair (1)')).path,'/Resources/Wearables Manager - Camera.PNG');assert.equal(a.writes.length,0);assert(a.dirs.every(d=>d.deleted));});
   test(file+': throwing configured directory constructor uses actual automatic fallback',()=>{const a=iconsClass(overlay.source,[rule('exactLabel','Hair','custom.png')],['custom.png'],true,{throwRuleDir:true});assert.equal(a.icons.GetIconForWearable(node('Camera','Hair (1)')).path,'/Resources/Wearables Manager - Camera.PNG');assert(a.dirs.every(d=>d.deleted));});
   test(file+': unmatched rules retain actual automatic fallback',()=>{const a=iconsClass(overlay.source,[rule('exactName','Different','custom.png')],['custom.png']);assert.equal(a.icons.GetIconForWearable(node('Camera','Hair')).path,'/Resources/Wearables Manager - Camera.PNG');assert.equal(a.writes.length,0);});
-  test(file+': absent optional support retains actual automatic fallback',()=>{const a=iconsClass(overlay.source,[rule('exactLabel','Hair','custom.png')],['custom.png'],false);assert.equal(a.icons.GetIconForWearable(node('Camera','Hair')).path,'/Resources/Wearables Manager - Camera.PNG');assert.equal(a.writes.length,0);});
+  test(file+': absent optional matcher retains actual automatic fallback',()=>{const a=iconsClass(overlay.source,[rule('exactLabel','Hair','custom.png')],['custom.png'],false);assert.equal(a.icons.GetIconForWearable(node('Camera','Hair')).path,'/Resources/Wearables Manager - Camera.PNG');assert.equal(a.writes.length,0);});
   test(file+': absent optional configuration retains actual automatic fallback',()=>{const a=iconsClass(overlay.source,[],[],true,{noConfig:true});assert.equal(a.icons.GetIconForWearable(node('Camera','Hair')).path,'/Resources/Wearables Manager - Camera.PNG');});
   test(file+': validated shipped JSON custom mapping still loads without saving',()=>{
     const shippedJson=JSON.stringify({InharitanceIcons:{'Custom Camera':'DzBasicCamera'},NamedIcons:{}}),a=iconsClass(overlay.source,[],[],true,{shippedJson});assert.equal(a.icons.GetIconForWearable(node('Camera','Hair')).path,'/Resources/Custom Camera.PNG');assert.equal(a.opens,1);assert.equal(a.closes,1);assert.equal(a.writes.length,0);
     if(!integrated){const untouchedSource=source.slice(source.indexOf('function WearablesIconsClass('),source.indexOf('function TagImageManagerClass('));let changed=overlay.source.slice(overlay.source.indexOf('function WearablesIconsClass('),overlay.source.indexOf('function TagImageManagerClass('));for(const op of overlay.operations.slice().reverse())changed=changed.replace(op.newText,op.oldText);assert.equal(changed,untouchedSource);}
+  });
+  const baseline=fs.readFileSync(path.join(root,'.test-output/baseline',file),'utf8');
+  for(const [type,name,label] of [
+    ['DzNode','10in1CW_SlitSkirt_4576','10in1 Casual Wardrobe Slit Skirt'],
+    ['DzGeometryShellNode','Hair','Other'],
+    ['DzPointLight','Unknown','Bottle'],
+    ['DzDForceWindNode','Shirt','Shirt'],
+    ['DzNode','Unknown','Completely Unknown'],
+    ['DzNode','Shirt','Dress'],
+    ['DzNode','BlueHat','Blue Hat'],
+    ['DzNode','DenimDress','Denim Dress']
+  ])test(file+': shared built-in icon preserves baseline precedence for '+type+' '+name,()=>{
+    const n=node(name,label);n.className=()=>type;
+    const old=iconsClass(baseline,[],[]),current=iconsClass(overlay.source,[],[]);
+    assert.equal(current.icons.GetIconForWearable(n).path,old.icons.GetIconForWearable(n).path);
+    assert.equal(current.writes.length,0);assert(current.dirs.every(d=>d.deleted));
   });
 }
 
