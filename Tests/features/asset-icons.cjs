@@ -6,6 +6,8 @@ const args=process.argv.slice(2);
 if(args.length&&(args.length!==2||args[0]!=='--source-root'))throw Error('Usage: node Tests/features/asset-icons.cjs [--source-root <product-root>]');
 const root=path.resolve(args.length?args[1]:path.join(__dirname,'../..')),featureDirectory=path.join(root,'Tests/features');
 const sourcePaths={support:path.join(root,'Resources/WM2 Support.dsa'),ui:path.join(root,'Resources/WM2 Settings UI.dsa')};
+const {getFunction}=require('../support/extract.cjs');
+const baselineMenuPath=path.join(root,'.test-output/baseline/Wearables Manager Menu.dsa');
 const snapshots=new Map(Object.values(sourcePaths).map(file=>[path.resolve(file),fs.readFileSync(file,'utf8')]));
 const readOnlyFS={readFileSync(file,encoding){const text=snapshots.get(path.resolve(file));return text===undefined?fs.readFileSync(file,encoding):encoding?text:Buffer.from(text);}};
 function controlledRequire(name){if(name==='fs'||name==='node:fs')return readOnlyFS;if(!['path','node:path','vm','node:vm','assert','node:assert','crypto','node:crypto'].includes(name))throw Error('Unexpected helper dependency '+name);return require(name);}
@@ -43,6 +45,23 @@ function inside(widget,ancestor){for(let current=widget;current;current=current.
 function tile(e,target){const body=e.one('DzScrollArea').widget,buttons=e.g.widgets.filter(w=>w.kind==='DzPushButton'&&inside(w,body)&&w.wm2EditingNode&&w.wm2EditingNode.elementID===target.elementID);assert.equal(buttons.length,1,'One current preview tile for '+target.name);return buttons[0];}
 function clickTile(e,target){const button=tile(e,target),callbacks=button.signals['clicked()']||[];assert.equal(callbacks.length,1,'Tile has one editing signal');callbacks[0]();}
 function caption(e,target){assert.equal(e.one('DzBasicDialog').caption,'Icon rules for '+target.label+' ['+target.name+']');const headings=e.g.widgets.filter(w=>w.kind==='DzLabel'&&w.text===e.one('DzBasicDialog').caption);assert.equal(headings.length,1);assert(headings[0].font.bold);assert(headings[0].font.pointSize>=16);}
+function metadataNode(filePath='/data/Vendor/Product/ItemKey/Name.dsf',author='',raw='RawDifferentId'){
+ const n=node('RenamedInternal','Copied Label (3)',raw);n.assetUri={filePath};n.assetAuthor={toString:()=>author};return n;
+}
+function actualFunction(text,name){
+ // Delegate declarations and closing braces have different indentation in the
+ // actual engines. Extract the complete bounded delegate, not the class brace.
+ const delegate=new RegExp('^[ \\t]*function '+name+'\\(oWearable\\)\\s*\\{\\s*return WM2Support\\.wearableAssetInfo\\(oWearable\\)\\.caption;\\s*\\}','m').exec(text);
+ assert(delegate,'Missing actual shared caption delegate '+name);
+ return delegate[0];
+}
+let baselineCaption;
+function originalCaption(n){
+ if(!baselineCaption){assert(fs.existsSync(baselineMenuPath),'Actual original Menu baseline is required: '+baselineMenuPath);const text=fs.readFileSync(baselineMenuPath,'utf8');baselineCaption=vm.runInNewContext(getFunction(text,'GetWearableItemAuthorString').text+'\nGetWearableItemAuthorString;');}
+ return baselineCaption(n);
+}
+function backButton(e){const body=e.one('DzScrollArea').widget,buttons=e.g.widgets.filter(w=>w.kind==='DzPushButton'&&inside(w,body)&&w.wm2OwnerNode);assert.equal(buttons.length,1,'One current owner navigation button');assert.equal(buttons[0].text,'Back to '+buttons[0].wm2OwnerNode.getLabel());return buttons[0];}
+function clickBack(e){const button=backButton(e),callbacks=button.signals['clicked()']||[];assert.equal(callbacks.length,1);callbacks[0]();}
 
 test('actual asset kinds validate without changing unrelated configuration',()=>{const f=io.fixture(),value=config([rule('exactAssetId','/data/Vendor/Item.dsf#Item'),rule('assetIdWord','Item')]),before=plain(value),result=f.support.validate(value);assert(result.ok,result.message);assert.deepEqual(plain(result.config),before);assert.deepEqual(value,before);});
 test('asset kinds round-trip Unicode URIs and literal words in the separate settings file',()=>{const f=io.fixture(),value=config([rule('exactAssetId','/data/供应商/Armour%20Set/Helmet.dsf#Helmet'),rule('assetIdWord','helmet_long')]),loaded=f.support.load(io.RESOURCE),legacy=f.files.get(io.LEGACY).raw;assert(f.support.save(io.RESOURCE,value,loaded.rawToken).ok);assert.deepEqual(plain(f.support.load(io.RESOURCE).config),value);assert.equal(f.files.get(io.LEGACY).raw,legacy);});
@@ -77,6 +96,89 @@ test('valid edit of an existing rule replaces that row before switching targets'
 test('invalid dirty form blocks tile switch and retains pattern target and list',()=>{const {e,a,b}=figureWorld();e.g.steps=[()=>{e.click('Preview Scene');e.one('DzLineEdit').text='   ';clickTile(e,b);caption(e,a);assert.equal(e.one('DzLineEdit').text,'   ');assert.equal(e.one('DzListBox').items.length,0);assert(e.status().text.includes('Keep this draft:'),e.status().text);assert.equal(e.g.selected,a);return false;}];assert.equal(dialog(e).saved,false);assert.equal(e.g.saved.length,0);noWrites(e);});
 test('stale preview tile rejects target change before committing the dirty draft',()=>{const {e,a,b,figure}=figureWorld();e.g.steps=[()=>{e.click('Preview Scene');e.one('DzLineEdit').text='Pending Alpha';const callback=tile(e,b).signals['clicked()'][0];e.g.nodes=e.g.nodes.filter(n=>n!==b);figure.children=figure.children.filter(n=>n!==b);callback();caption(e,a);assert.equal(e.one('DzLineEdit').text,'Pending Alpha');assert.equal(e.one('DzListBox').items.length,0);assert(e.status().text.includes('unavailable'));return false;}];dialog(e);assert.equal(e.g.saved.length,0);noWrites(e);});
 test('tile moved to another owner rejects change before committing the dirty draft',()=>{const {e,a,b,figure}=figureWorld(),other=node('Genesis8Female','Other Figure');other.type='DzFigure';e.g.nodes.push(other);e.g.steps=[()=>{e.click('Preview Scene');e.one('DzLineEdit').text='Pending Alpha';const callback=tile(e,b).signals['clicked()'][0];figure.children=figure.children.filter(n=>n!==b);b.parent=other;other.children=[b];callback();caption(e,a);assert.equal(e.one('DzListBox').items.length,0);assert.equal(e.one('DzLineEdit').text,'Pending Alpha');assert(e.status().text.includes('no longer belongs'));return false;}];dialog(e);assert.equal(e.g.saved.length,0);noWrites(e);});
+
+for(const [name,filePath,author,raw,key,expectedAuthor] of [
+ ['standard vendor','/data/Vendor/Product/ItemKey/Name.dsf','','RawDifferent','ItemKey','Vendor'],
+ ['explicit author','/data/Vendor/Product/ItemKey/Name.dsf','Creator','RawDifferent','ItemKey','Creator'],
+ ['quoted first author','/data/Vendor/Product/ItemKey/Name.dsf','["Creator","Other",""]','RawDifferent','ItemKey','Creator'],
+ ['quoted empty first author','/data/Vendor/Product/ItemKey/Name.dsf','["","Other",""]','RawDifferent','ItemKey',''],
+ ['nonstandard raw fallback','/data/Vendor/Item.dsf','Creator','RawFallback','RawFallback','Creator'],
+ ['author only','Name.dsf','Creator','','','Creator'],
+ ['empty metadata','Name.dsf','','','',''],
+ ['empty item folder raw fallback','/data/Vendor/Product//Name.dsf','','RawFallback','RawFallback','Vendor'],
+ ['encoded item retained','/data/Vendor/Product/Item%20Key/Name.dsf','','RawDifferent','Item%20Key','Vendor']
+])test('asset caption/key matches ACTUAL original Menu helper: '+name,()=>{
+ const n=metadataNode(filePath,author,raw),e=environment(n),info=e.support.wearableAssetInfo(n);
+ assert.equal(info.assetId,key);assert.equal(info.author,expectedAuthor);assert.equal(info.caption,originalCaption(n));
+ assert.equal(e.support.iconNodeAssetId(n),key);noWrites(e);
+});
+for(const file of ['Wearables Manager Full.dsa','Wearables Manager Menu.dsa'])test(file+' actual caption wrapper delegates to the same shared info',()=>{
+ const n=metadataNode('/data/Vendor/Product/Key/Name.dsf','["Creator","Other"]','Raw'),e=environment(n),source=fs.readFileSync(path.join(root,file),'utf8');
+ const wrapper=vm.runInNewContext(actualFunction(source,'GetWearableItemAuthorString')+'\nGetWearableItemAuthorString;',{WM2Support:e.support});
+ assert.equal(wrapper(n),originalCaption(n));assert.equal(wrapper(n),e.support.wearableAssetInfo(n).caption);noWrites(e);
+});
+test('missing/throwing asset metadata fails gracefully and never coerces raw identity',()=>{
+ const e=environment();assert.deepEqual(plain(e.support.wearableAssetInfo(null)),{assetId:'',author:'',caption:''});
+ const n=node('PretendKey','PretendKey','Fallback');Object.defineProperty(n,'assetUri',{get(){throw Error('Unavailable URI');}});Object.defineProperty(n,'assetAuthor',{get(){throw Error('Unavailable author');}});
+ assert.deepEqual(plain(e.support.wearableAssetInfo(n)),{assetId:'Fallback',author:'',caption:'Fallback'});
+ n.assetId={toString:()=> 'PretendKey'};assert.equal(e.support.iconNodeAssetId(n),'');noWrites(e);
+});
+test('standard folder key takes priority without reading raw assetId',()=>{
+ const n=metadataNode(),e=environment(n);Object.defineProperty(n,'assetId',{get(){throw Error('Raw fallback must not be read');}});
+ assert.equal(e.support.iconNodeAssetId(n),'ItemKey');assert.equal(e.support.wearableAssetInfo(n).caption,'ItemKey by Vendor');noWrites(e);
+});
+test('Exact AssetId matches key only, ignoring author raw URI name and label',()=>{
+ const n=metadataNode('/data/Vendor/Product/Coat (1)/Name.dsf','Creator','RawOpaque');
+ assert.equal(match([rule('exactAssetId','coat (1)')],n).matched,true);
+ for(const wrong of ['Coat','Coat (1) by Creator','Creator','RawOpaque',n.assetUri.filePath,n.name,n.label])assert.equal(match([rule('exactAssetId',wrong)],n).matched,false);
+});
+test('AssetId word matches the derived key with established boundaries and case',()=>{
+ const n=metadataNode('/data/Vendor/Product/LONG_Coat-2/Name.dsf','Creator','RawOpaque');
+ assert.equal(match([rule('assetIdWord','coat')],n).matched,true);assert.equal(match([rule('assetIdWord','Creator')],n).matched,false);
+ assert.equal(match([rule('assetIdWord','RawOpaque')],n).matched,false);
+});
+for(const kind of ['exactAssetId','assetIdWord'])test('derived '+kind+' stays consistent across matcher resolver and both preview APIs',()=>{
+ const n=metadataNode('/data/Vendor/Product/Item_Key/Name.dsf','Creator','RawDifferent'),rules=[rule(kind,kind==='exactAssetId'?'Item_Key':'key')],e=environment(n,rules);
+ const resolver=e.support.createIconResolver('C:/scratch/Resources',()=>rules),icon=resolver.resolve(n,rules);assert.equal(icon.source,'custom');assert.equal(icon.icon,'A.png');
+ const simple=e.support.previewIconRules(rules,[n],1);assert.equal(simple.rows[0].assetId,'Item_Key');assert.equal(simple.rows[0].assetCaption,'Item_Key by Creator');assert.equal(simple.rows[0].match.kind,kind);
+ const menu=e.support.previewMenu(e.context.Scene,config(rules),resolver,false);assert(menu.ok,menu.message);assert.equal(menu.rows[0].assetId,'Item_Key');assert.equal(menu.rows[0].assetCaption,'Item_Key by Creator');assert.equal(menu.rows[0].icon,icon.icon);noWrites(e);
+});
+test('UI copies KEY ONLY while preview shows the original item-key-by-author caption',()=>{
+ const n=metadataNode('/data/Vendor/Product/Item_Key/Name.dsf','["Creator","Other"]','RawDifferent'),e=environment(n);
+ e.g.steps=[()=>{e.kindCombo().currentItem=4;e.click('Use Selected AssetId');assert.equal(e.one('DzLineEdit').text,'Item_Key');
+  const body=e.one('DzScrollArea').widget,label=e.g.widgets.find(w=>w.kind==='DzLabel'&&inside(w,body)&&w.text==='Item_Key by Creator');assert(label);assert.equal(label.textFormat,e.context.DzLabel.PlainText);return false;}];
+ assert.equal(dialog(e).saved,false);assert.equal(e.g.saved.length,0);noWrites(e);
+});
+test('child to owner to child navigation preserves Scene selection and forces whole-owner preview',()=>{
+ const {e,a,b,figure}=figureWorld();e.g.steps=[()=>{assert.equal(backButton(e).wm2OwnerNode,figure);clickBack(e);caption(e,figure);assert.equal(e.preview().activeNode.elementID,figure.elementID);assert.equal(e.preview().canReturnToOwner,false);assert.equal(e.preview().wholeFigure,true);assert.equal(e.preview().rows.length,2);clickTile(e,b);caption(e,b);assert.equal(backButton(e).wm2OwnerNode,figure);assert.equal(e.g.selected,a);return false;}];
+ assert.equal(dialog(e).saved,false);assert.equal(e.g.saved.length,0);noWrites(e);
+});
+for(const save of [false,true])test('back navigation keeps valid dirty edits; '+(save?'Save persists':'Cancel discards')+' both child drafts',()=>{
+ const {e,a,b,figure}=figureWorld();e.g.steps=[()=>{e.one('DzLineEdit').text='Pending Alpha';e.iconCombo().currentItem=1;clickBack(e);caption(e,figure);assert.equal(e.one('DzListBox').items.length,1);clickTile(e,b);e.one('DzLineEdit').text='Pending Beta';e.iconCombo().currentItem=1;clickBack(e);caption(e,figure);assert.equal(e.one('DzListBox').items.length,2);assert.equal(e.g.saved.length,0);assert.equal(e.g.selected,a);return save;}];
+ assert.equal(dialog(e).saved,save);assert.equal(e.g.saved.length,save?1:0);if(save)assert.deepEqual(plain(e.g.saved[0].config.iconRules),[rule('exactLabel','Pending Alpha','B.PNG'),rule('exactLabel','Pending Beta','B.PNG')]);noWrites(e);
+});
+test('invalid dirty form blocks Back to owner without changing target or list',()=>{
+ const {e,a}=figureWorld();e.g.steps=[()=>{e.one('DzLineEdit').text='   ';clickBack(e);caption(e,a);assert.equal(e.one('DzLineEdit').text,'   ');assert.equal(e.one('DzListBox').items.length,0);assert(e.status().text.includes('Keep this draft:'));return false;}];dialog(e);assert.equal(e.g.saved.length,0);noWrites(e);
+});
+test('stale owner Back callback rejects before committing a pending child draft',()=>{
+ const {e,a,figure}=figureWorld();e.g.steps=[()=>{e.one('DzLineEdit').text='Pending Alpha';const callback=backButton(e).signals['clicked()'][0];e.g.nodes=e.g.nodes.filter(n=>n!==figure);callback();caption(e,a);assert.equal(e.one('DzListBox').items.length,0);assert(e.status().text.includes('unavailable'));return false;}];dialog(e);assert.equal(e.g.saved.length,0);noWrites(e);
+});
+test('cross-owner stale Back callback rejects after its active child changes owner',()=>{
+ const {e,a,figure}=figureWorld(),other=node('Genesis8Female','Other Figure');other.type='DzFigure';e.g.nodes.push(other);
+ e.g.steps=[()=>{e.one('DzLineEdit').text='Pending Alpha';const callback=backButton(e).signals['clicked()'][0];figure.children=figure.children.filter(n=>n!==a);a.parent=other;other.children=[a];callback();caption(e,a);assert.equal(e.one('DzListBox').items.length,0);assert(e.status().text.includes('no longer belongs'));return false;}];dialog(e);assert.equal(e.g.saved.length,0);noWrites(e);
+});
+test('back owner metadata uses the same Menu graph for nested bone fitted and parked items',()=>{
+ for(const kind of ['nested','bone','fitted','parked']){
+  const f=node('Genesis9','Main Figure');f.type='DzFigure';const target=node('Target','Target'),nodes=[f,target];
+  if(kind==='nested'){const cloth=node('Cloth','Cloth');cloth.type='DzFigure';cloth.parent=f;cloth.follow=f;target.parent=cloth;cloth.children=[target];f.children=[cloth];nodes.push(cloth);}
+  if(kind==='bone'){target.type='DzBone';target.parent=f;f.children=[target];}
+  if(kind==='fitted'){target.type='DzFigure';target.follow=f;}
+  if(kind==='parked'){const group=node('Storage','Storage');group.type='DzGroupNode';target.parent=group;group.children=[target];nodes.push(group);for(const n of [f,group])n.findDataItem=()=>({getSettings:()=>({getStringValue:(key,fallback)=>key==='ID'?'binding':fallback})});}
+  const e=environment(target,[],nodes),graph=e.support.menuGraph(e.context.Scene,config()),resolver=e.support.createIconResolver('C:/scratch/Resources');
+  const result=e.support.previewMenu(e.context.Scene,config(),resolver,false);assert(result.ok,result.message);assert.equal(result.owner.elementID,graph.owner(target).elementID);assert.equal(result.owner.elementID,f.elementID);assert.equal(result.activeNode.elementID,target.elementID);assert.equal(result.canReturnToOwner,true);
+  const owner=e.support.previewMenu(e.context.Scene,config(),resolver,true,null,f);assert(owner.ok,owner.message);assert.equal(owner.activeNode.elementID,f.elementID);assert.equal(owner.canReturnToOwner,false);noWrites(e);
+ }
+});
 
 const failures=tests.filter(item=>!item.pass);
 console.log(JSON.stringify({passed:tests.length-failures.length,failed:failures.length,nativeExecuted:false,sourceSHA256:Object.fromEntries(Object.entries(sourcePaths).map(([key,file])=>[key,crypto.createHash('sha256').update(snapshots.get(path.resolve(file))).digest('hex')])),failures}));

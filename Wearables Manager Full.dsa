@@ -3251,49 +3251,9 @@ include(sWM2ResourcesPath + "/WM2 Settings UI.dsa");
 
 		}
 
-		function GetWearableItemAuthorString(oWearable) {
-			if (!oWearable) return false;
-
-			// Get the asset URI from the node
-			var oAssetUri = oWearable.assetUri;
-			// Get the relative file path portion of the URI
-			var sRelPath = oAssetUri.filePath;
-
-			var sVendor = "", sProduct = "", sItemKey = "";
-			// Split the path into its constituent parts
-			var aParts = sRelPath.split("/");
-			if (aParts.length == 6) {
-				// If the standard has been followed;
-				// i.e., /data/Vendor/Product/Item/Name.dsf
-				// We can extract information from their positions
-				sVendor = aParts[2];
-				sProduct = aParts[3];
-				sItemKey = aParts[4];
-			}
-
-			var sAuthor = oWearable.assetAuthor.toString();
-			if (!sAuthor) {
-				sAuthor = sVendor;
-			} else if (sAuthor.indexOf("\"") >= 0) {
-				//["Author name","",""]
-				arrAuthor = sAuthor.split("\"");
-				if (arrAuthor.length > 2) sAuthor = arrAuthor[1];
-			}
-
-			//if (sProduct) sItemKey = sProduct;
-			if (!sItemKey) sItemKey = oWearable.assetId;
-
-			if (sItemKey && sAuthor) {
-				var sResult = sItemKey + " by " + sAuthor;
-			} else if (sItemKey) {
-				var sResult = sItemKey;
-			} else if (sAuthor) {
-				var sResult = "by " + sAuthor;
-			} else {
-				sResult = "";
-			}
-			return sResult;
-		};
+function GetWearableItemAuthorString(oWearable) {
+			return WM2Support.wearableAssetInfo(oWearable).caption;
+		}
 
 	}
 

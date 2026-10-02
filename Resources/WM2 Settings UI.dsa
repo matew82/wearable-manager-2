@@ -201,10 +201,15 @@ function WM2SettingsModel(support, resourcePath, firstIcon) {
     };
     model.clear();return model;
 }
-function WM2SettingsRenderMenuPreview(scroll,result,onSelect) {
+function WM2SettingsRenderMenuPreview(scroll,result,onSelect,onOwner,resourcePath) {
     var body=new DzWidget(scroll),layout=new DzVBoxLayout(body),metrics=WM2SettingsMetrics(body);
     layout.margin=metrics.margin;layout.spacing=metrics.spacing;
     if(result.title)layout.addWidget(WM2SettingsHeading(body,result.title==="Selected item"?"Selected":result.title,"#87c9ff"));
+    if(result.canReturnToOwner&&result.owner&&typeof onOwner==="function"){
+        var back=WM2SettingsButton(body,"Back to "+WM2Support.iconNodeLabel(result.owner),resourcePath,"Wearables Manager - Arrow Left.png");
+        back.wm2OwnerNode=result.owner;layout.addWidget(back);
+        connect(back,"clicked()",function(){onOwner(result.owner);});
+    }
     if(result.message)layout.addWidget(WM2SettingsPlainLabel(body,result.message));
     var sourceRows=result.rows||[],rows=[],stored=[],section="";
     for(var r=0;r<sourceRows.length;r++)(sourceRows[r].isInGroup?stored:rows).push(sourceRows[r]);
@@ -216,8 +221,11 @@ function WM2SettingsRenderMenuPreview(scroll,result,onSelect) {
         image.text="";image.buttonStyle=DzPushButton.BTool;image.sizedFromIcon=true;image.minWidth=91;image.minHeight=91;
         image.toolTip=item.usable?item.label:"Icon unavailable";
         WM2Support.setMenuPixmap(image,item.pixmap);row.layout.addWidget(image);
-        var label=WM2SettingsPlainLabel(row.widget,(item.parentLabel?item.parentLabel+" > ":"")+item.label);
-        label.font=WM2SettingsFont(label,false);label.font.bold=true;row.layout.addWidget(label,1);
+        var textColumn=new DzWidget(row.widget),textLayout=new DzVBoxLayout(textColumn);textLayout.margin=0;textLayout.spacing=2;
+        var label=WM2SettingsPlainLabel(textColumn,(item.parentLabel?item.parentLabel+" > ":"")+item.label);
+        label.font=WM2SettingsFont(label,false);label.font.bold=true;textLayout.addWidget(label);
+        if(item.assetCaption)textLayout.addWidget(WM2SettingsPlainLabel(textColumn,item.assetCaption));
+        row.layout.addWidget(textColumn,1);
         if(!item.usable)row.layout.addWidget(WM2SettingsPlainLabel(row.widget,"Icon unavailable"));
         row.layout.margin=Math.min(10,item.depth)*16;
         image.wm2EditingNode=item.node;
@@ -254,7 +262,7 @@ function WM2ShowIconRules(resourcePath,getPreviewContext) {
     var useName=WM2SettingsButton(selectionActions.widget,"Use Selected Name",resourcePath,"Wearables Manager - Prop.png"),useLabel=WM2SettingsButton(selectionActions.widget,"Use Selected Label",resourcePath,"Wearables Manager - Prop.png"),useAssetId=WM2SettingsButton(selectionActions.widget,"Use Selected AssetId",resourcePath,"Wearables Manager - Prop.png");selectionActions.layout.addWidget(useName);selectionActions.layout.addWidget(useLabel);selectionActions.layout.addWidget(useAssetId);
     var assetValue=WM2SettingsPlainLabel(content,"");layout.addWidget(assetValue);
     var up=WM2SettingsButton(moving.widget,"Move Up",resourcePath,"Wearables Manager - Arrow Left.png",true),down=WM2SettingsButton(moving.widget,"Move Down",resourcePath,"Wearables Manager - Arrow Right.png",true),previewButton=WM2SettingsButton(moving.widget,"Preview Scene",resourcePath,"Wearables Manager - Group.png");moving.layout.addWidget(up);moving.layout.addWidget(down);moving.layout.addWidget(previewButton);
-    layout.addWidget(WM2SettingsPlainLabel(content,"Preview Scene shows the active item's figure and its Menu items. Click a picture to edit that item without changing Scene selection or moving wearables. A changed valid form is kept in the draft list before switching; an invalid form blocks switching until corrected or Clear Draft. Save writes all draft changes; Cancel discards them. Legacy prefix forms are read-only; use Clear Draft for a new rule."));
+    layout.addWidget(WM2SettingsPlainLabel(content,"Preview Scene shows the active item's figure and its Menu items. Click a picture to edit that item; Back to Figure returns to its resolved owner. Menu's item-key by author caption supplies the assetId key; author text is separate. These actions do not change Scene selection or move wearables. A changed valid form is kept in the draft list before switching; an invalid form blocks switching until corrected or Clear Draft. Save writes all draft changes; Cancel discards them. Legacy prefix forms are read-only; use Clear Draft for a new rule."));
     var preview=new DzScrollArea(content);preview.widgetResizable=true;preview.minHeight=Math.max(180,metrics.previewHeight);layout.addWidget(preview,1);layout.addWidget(status);
     var previewWholeFigure=false,editingTarget=null,iconResolver=support.createIconResolver(resourcePath,function(){return model.config.iconRules;});
     function say(text){WM2SettingsSetPlainText(status,text);}
@@ -288,7 +296,7 @@ function WM2ShowIconRules(resourcePath,getPreviewContext) {
             var context=typeof getPreviewContext==="function"?getPreviewContext():null;
             var result=support.previewMenu(Scene,next,iconResolver,previewWholeFigure,context,editingTarget);
             if(note)result.message=note+(result.message?" "+result.message:"");
-            WM2SettingsRenderMenuPreview(preview,result,function(node){choosePreviewTarget(node,result.owner);});
+            WM2SettingsRenderMenuPreview(preview,result,function(node){choosePreviewTarget(node,result.owner);},function(owner){returnToOwner(owner,result.activeNode);},resourcePath);
         }catch(e){WM2SettingsRenderMenuPreview(preview,{ok:false,message:"Preview unavailable: "+String(e),rows:[]});}
     }
     function populate(){populating=true;try{
@@ -308,7 +316,14 @@ function WM2ShowIconRules(resourcePath,getPreviewContext) {
     connect(clearDraft,"clicked()",function(){perform(model.resetDraft,false);say("Form cleared; no rule was added.");});
     connect(add,"clicked()",function(){perform(function(){return model.commit(true);},true);});connect(update,"clicked()",function(){perform(function(){return model.active<0?{ok:false,message:"Select a rule to update."}:model.commit(false);},true);});connect(remove,"clicked()",function(){perform(model.remove,false);});
     connect(up,"clicked()",function(){perform(function(){return model.move(-1);},false);});connect(down,"clicked()",function(){perform(function(){return model.move(1);},false);});
-    function choosePreviewTarget(node,expectedOwner){try{
+    function returnToOwner(owner,source){try{
+        var graph=support.menuGraph(Scene,model.config),liveOwner=graph.live(owner),liveSource=graph.live(source),selected=support.iconSceneNodes(Scene,true,2);
+        var active=editingTarget?graph.live(editingTarget):selected.ok&&selected.total===1?graph.live(selected.nodes[0]):null;
+        if(!liveOwner||!liveSource||!active||!graph.same(active,liveSource)){say("That owner navigation is unavailable; the active item changed.");return;}
+        if(!graph.same(graph.owner(liveSource),liveOwner)){say("That item no longer belongs to the previewed figure.");return;}
+        choosePreviewTarget(liveOwner,liveOwner,true);
+    }catch(e){say("The owner could not be selected: "+String(e));}}
+    function choosePreviewTarget(node,expectedOwner,wholeFigure){try{
         var graph=support.menuGraph(Scene,model.config),target=graph.live(node);
         if(!target || !support.isIconNode(target)){say("That preview item is unavailable.");return;}
         if(expectedOwner&&!graph.same(graph.owner(target),expectedOwner)){say("That item no longer belongs to the previewed figure.");return;}
@@ -318,7 +333,7 @@ function WM2ShowIconRules(resourcePath,getPreviewContext) {
         var matched=support.matchIcon(model.config.iconRules,target);
         if(matched.matched){var selectedRule=model.select(matched.ruleIndex);if(!selectedRule.ok){say(selectedRule.message);return;}}
         else {model.clear();model.setForm({kind:"exactLabel",pattern:support.iconNodeLabel(target),icon:model.form.icon});model.baseline=JSON.stringify(model.form);}
-        var keepWhole=previewWholeFigure;populate();renderPreview(keepWhole,false);
+        var keepWhole=wholeFigure===true?true:previewWholeFigure;populate();renderPreview(keepWhole,false);
         say("Editing "+support.iconNodeLabel(target)+". Prior valid edits remain in the draft list; Save applies all changes.");
     }catch(e){say("Editing target could not be changed: "+String(e));}}
     function useSelected(field){try{var current=refreshSelection();if(!current.ok){say(current.message);return;}var text=field==="asset"?support.iconNodeAssetId(current.node):field==="label"?support.iconNodeLabel(current.node):support.iconNodeName(current.node);if(!text){say("The active item has no "+(field==="asset"?"assetId":field)+" value.");return;}capture();model.setForm({kind:model.form.kind,pattern:text,icon:model.form.icon});populate();renderPreview(false,true);say("Selected text copied to Pattern; Match mode kept. Add Rule, Update Rule or Save applies the changed form.");}catch(e){say(String(e));}}

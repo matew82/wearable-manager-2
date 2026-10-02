@@ -366,12 +366,24 @@ iconNodeLabel: function (node) {
     return "";
 },
 
-// Documented DzNode.assetId is the raw asset identifier string (4.8.1.18+).
-// assetUri, assetSource, runtime IDs and names are different values.
+// WM Menu's existing "item key by author" source and formatting semantics.
+// A standard six-part path supplies the Item folder; raw assetId is fallback.
+wearableAssetInfo: function (node) {
+    var itemKey="",vendor="",author="",path="";
+    if(!node)return {assetId:"",author:"",caption:""};
+    try {var uri=node.assetUri,value=uri?uri.filePath:null;if(typeof value==="string")path=value;}catch(e){}
+    var parts=path.split("/");
+    if(parts.length===6){vendor=parts[2];itemKey=parts[4];}
+    try {var authorValue=node.assetAuthor;if(authorValue!==null&&typeof authorValue!=="undefined"&&typeof authorValue.toString==="function"){var text=authorValue.toString();if(typeof text==="string")author=text;}}catch(e){}
+    if(!author)author=vendor;
+    else if(author.indexOf("\"")>=0){var authorParts=author.split("\"");if(authorParts.length>2)author=authorParts[1];}
+    if(!itemKey)try {var raw=node.assetId;if(typeof raw==="string")itemKey=raw;}catch(e){}
+    var caption=itemKey&&author?itemKey+" by "+author:itemKey?itemKey:author?"by "+author:"";
+    return {assetId:itemKey,author:author,caption:caption};
+},
+
 iconNodeAssetId: function (node) {
-    if(!node)return "";
-    try { var value=node.assetId;return typeof value==="string"?value:""; }
-    catch(e){return "";}
+    return this.wearableAssetInfo(node).assetId;
 },
 
 // Literal matching: both edges must be a string edge or an allowed separator.
@@ -482,10 +494,10 @@ previewIconRules: function (rules, nodes, limit) {
     var collection=this.iconNodeCollection(nodes,cap),rows=[],matched=0;
     if(!collection.ok)return {ok:false,message:collection.message,rows:rows,scanned:0,matched:0,total:0,truncated:false,limit:cap};
     for (var i = 0; i < collection.nodes.length; i++) {
-        var name = this.iconNodeName(collection.nodes[i]), label = this.iconNodeLabel(collection.nodes[i]), assetId=this.iconNodeAssetId(collection.nodes[i]);
+        var name = this.iconNodeName(collection.nodes[i]), label = this.iconNodeLabel(collection.nodes[i]), assetInfo=this.wearableAssetInfo(collection.nodes[i]), assetId=assetInfo.assetId;
         var result = this.matchIcon(rules, {name:name, label:label, assetId:assetId});
         if (result.matched) matched++;
-        rows.push({nodeIndex:i, name:name, label:label, assetId:assetId, normalizedLabel:this.normalizeCopyLabel(label), match:result});
+        rows.push({nodeIndex:i, name:name, label:label, assetId:assetId, assetCaption:assetInfo.caption, normalizedLabel:this.normalizeCopyLabel(label), match:result});
     }
     return {ok:true,message:"",rows:rows,scanned:rows.length,matched:matched,total:collection.total,truncated:rows.length<collection.total,limit:cap};
 }
@@ -801,10 +813,10 @@ function WM2InstallSupportedFigures(oSupport) {
                 }
                 raw=graph.rows(raw);
             } else raw=[{node:node,parent:node.getNodeParent(),isInGroup:false,root:node,depth:0}];
-            var result={ok:true,title:wholeFigure||figureSelection?main.getLabel():"Selected item",owner:main,wholeFigure:!!(wholeFigure||figureSelection),message:"",rows:[]};
+            var result={ok:true,title:wholeFigure||figureSelection?main.getLabel():"Selected item",owner:main,activeNode:node,canReturnToOwner:!!main&&!graph.same(node,main),wholeFigure:!!(wholeFigure||figureSelection),message:"",rows:[]};
             for(var i=0;i<raw.length;i++){
-                var item=raw[i],effective=resolver.resolve(item.node,config.iconRules);
-                result.rows.push({node:item.node,label:oSupport.iconNodeLabel(item.node),parentLabel:item.depth>0&&item.parent?oSupport.iconNodeLabel(item.parent):"",depth:item.depth||0,isInGroup:item.isInGroup,icon:effective.icon,source:effective.source,pixmap:effective.pixmap,usable:effective.usable});
+                var item=raw[i],effective=resolver.resolve(item.node,config.iconRules),assetInfo=oSupport.wearableAssetInfo(item.node);
+                result.rows.push({node:item.node,label:oSupport.iconNodeLabel(item.node),assetId:assetInfo.assetId,assetCaption:assetInfo.caption,parentLabel:item.depth>0&&item.parent?oSupport.iconNodeLabel(item.parent):"",depth:item.depth||0,isInGroup:item.isInGroup,icon:effective.icon,source:effective.source,pixmap:effective.pixmap,usable:effective.usable});
             }
             if(!result.rows.length)result.message="No Menu items for this figure.";
             if(pending.length)result.message="Some stored items need recovery review and are not shown.";
