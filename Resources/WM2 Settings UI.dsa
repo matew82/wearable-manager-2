@@ -212,9 +212,11 @@ function WM2SettingsKindLabel(kind) {
     return String(kind);
 }
 function WM2SettingsModePicker(parent, layout, resourcePath, changed) {
-    var row=WM2SettingsRow(parent,layout),kinds=["exactName","exactLabel","nameWord","labelWord","exactAssetId","assetIdWord"],names=["Exact Name","Exact Label","Word Name","Word Label","Exact AssetId","Word AssetId"],fallback=["=N","=L","wN","wL","=A","wA"];
+    var row=WM2SettingsRow(parent,layout),kinds=["exactName","nameWord","exactLabel","labelWord","exactAssetId","assetIdWord"],names=["Exact Name","Word Name","Exact Label","Word Label","Exact AssetId","Word AssetId"],fallback=["=N","wN","=L","wL","=A","wA"],pairSpacing=WM2SettingsMetrics(row.widget).spacing;
+    row.layout.spacing=0;
     var picker={currentItem:0,buttons:[],kinds:kinds,enabled:true};row.widget.wm2ModePicker=picker;
     for(var i=0;i<kinds.length;i++) {
+        if(i>0)row.layout.addSpacing(i===2||i===4?10:pairSpacing);
         var filename="Wearables Manager - Match "+names[i]+".png",onFilename="Wearables Manager - Match "+names[i]+" On.png";
         var button=WM2SettingsButton(row.widget,fallback[i],resourcePath,filename,false,32);
         button.wm2ModeNormalFilename=filename;button.wm2ModeOnFilename=onFilename;button.wm2ModeFallback=fallback[i];
@@ -226,7 +228,7 @@ function WM2SettingsModePicker(parent, layout, resourcePath, changed) {
         button.minWidth=44;button.minHeight=44;button.maxWidth=44;button.maxHeight=44;if(typeof button.setCheckable==="function")button.setCheckable(true);else try{button.getWidget().checkable=true;}catch(e){}try{button.getWidget().autoDefault=false;}catch(e){}button.wm2ModeKind=kinds[i];button.toolTip=WM2SettingsKindLabel(kinds[i]);row.layout.addWidget(button);picker.buttons.push(button);
         (function(index,control){connect(control,"clicked()",function(){if(picker.enabled&&control.enabled){picker.select(index,true);try{control.getWidget().setFocus();}catch(e){}}});})(i,button);
     }
-    var label=WM2SettingsPlainLabel(row.widget,"");label.font=WM2SettingsFont(label,true);row.layout.addWidget(label,1);picker.label=label;
+    var label=WM2SettingsPlainLabel(row.widget,"");label.font=WM2SettingsFont(label,true);row.layout.addSpacing(pairSpacing);row.layout.addWidget(label,1);picker.label=label;
     picker.select=function(index,notify,legacyKind){
         index=Number(index);picker.currentItem=index>=0&&index<kinds.length&&Math.floor(index)===index?index:-1;
         for(var i=0;i<picker.buttons.length;i++){
@@ -373,12 +375,12 @@ function WM2ShowIconRules(resourcePath,getPreviewContext) {
     var patternRow=WM2SettingsRow(content,layout),pattern=new DzLineEdit(patternRow.widget);pattern.minHeight=metrics.fieldHeight;patternRow.layout.addWidget(WM2SettingsPlainLabel(patternRow.widget,"Pattern"));patternRow.layout.addWidget(pattern,1);
     var iconRow=WM2SettingsRow(content,layout),icon=new DzComboBox(iconRow.widget),iconValues=icons.slice(0),browse=WM2SettingsButton(iconRow.widget,"Browse PNG",resourcePath,"Wearables Manager - Prop.png");icon.minHeight=metrics.fieldHeight;iconRow.layout.addWidget(WM2SettingsPlainLabel(iconRow.widget,"Icon"));iconRow.layout.addWidget(icon,1);iconRow.layout.addWidget(browse);
     for(var j=0;j<icons.length;j++)icon.addItem(icons[j]);
-    var actions=WM2SettingsRow(content,layout),selectionActions=WM2SettingsRow(content,layout),moving=WM2SettingsRow(content,layout),populating=false,selection=null,connectedSelection=false;
+    var actions=WM2SettingsRow(content,layout),selectionActions=WM2SettingsRow(content,layout),populating=false,selection=null,connectedSelection=false;
     var add=WM2SettingsButton(actions.widget,"Add Rule",resourcePath,"Wearables Manager - Prop.png"),update=WM2SettingsButton(actions.widget,"Update Rule",resourcePath,"Wearables Manager - Ok.png"),remove=WM2SettingsButton(actions.widget,"Remove",resourcePath,"Wearables Manager - Cancel.png"),clearDraft=WM2SettingsButton(actions.widget,"Clear Draft",resourcePath,"Wearables Manager - Empty.png");
-    actions.layout.addWidget(clearDraft);actions.layout.addWidget(add);actions.layout.addWidget(update);actions.layout.addWidget(remove);
-    var useName=WM2SettingsButton(selectionActions.widget,"Use Selected Name",resourcePath,"Wearables Manager - Prop.png"),useLabel=WM2SettingsButton(selectionActions.widget,"Use Selected Label",resourcePath,"Wearables Manager - Prop.png"),useAssetId=WM2SettingsButton(selectionActions.widget,"Use Selected AssetId",resourcePath,"Wearables Manager - Prop.png");selectionActions.layout.addWidget(useName);selectionActions.layout.addWidget(useLabel);selectionActions.layout.addWidget(useAssetId);
+    var up=WM2SettingsButton(actions.widget,"Move Up",resourcePath,"Wearables Manager - Arrow Left.png",true),down=WM2SettingsButton(selectionActions.widget,"Move Down",resourcePath,"Wearables Manager - Arrow Right.png",true);
+    actions.layout.addWidget(up);actions.layout.addWidget(clearDraft);actions.layout.addWidget(add);actions.layout.addWidget(update);actions.layout.addWidget(remove);
+    var useName=WM2SettingsButton(selectionActions.widget,"Use Selected Name",resourcePath,"Wearables Manager - Prop.png"),useLabel=WM2SettingsButton(selectionActions.widget,"Use Selected Label",resourcePath,"Wearables Manager - Prop.png"),useAssetId=WM2SettingsButton(selectionActions.widget,"Use Selected AssetId",resourcePath,"Wearables Manager - Prop.png");selectionActions.layout.addWidget(down);selectionActions.layout.addWidget(useName);selectionActions.layout.addWidget(useLabel);selectionActions.layout.addWidget(useAssetId);
     var assetValue=WM2SettingsPlainLabel(content,"");layout.addWidget(assetValue);
-    var up=WM2SettingsButton(moving.widget,"Move Up",resourcePath,"Wearables Manager - Arrow Left.png",true),down=WM2SettingsButton(moving.widget,"Move Down",resourcePath,"Wearables Manager - Arrow Right.png",true),previewButton=WM2SettingsButton(moving.widget,"Preview Scene",resourcePath,"Wearables Manager - Group.png");moving.layout.addWidget(up);moving.layout.addWidget(down);moving.layout.addWidget(previewButton);
     var preview=new DzScrollArea(content);preview.widgetResizable=true;preview.minHeight=Math.max(180,metrics.previewHeight);layout.addWidget(preview,1);layout.addWidget(status);
     var previewWholeFigure=false,editingTarget=null,iconResolver=support.createIconResolver(resourcePath,function(){return model.config.iconRules;});
     function say(text){WM2SettingsSetPlainText(status,text);}
@@ -464,7 +466,6 @@ function WM2ShowIconRules(resourcePath,getPreviewContext) {
         }
         say("Icon import stopped after repeated invalid or conflicting filenames. Current icon kept.");
     }catch(e){say("Icon import failed; current icon kept. "+String(e));}});
-    connect(previewButton,"clicked()",function(){capture();renderPreview(true,true);});
     function selectionChanged(){editingTarget=null;var current=refreshSelection();if(current.ok)say("Selected: "+support.iconNodeLabel(current.node));renderPreview(null,true);}
     try{connect(Scene,"nodeSelectionListChanged()",selectionChanged);connectedSelection=true;}catch(e){}
     selection=support.iconSelection(Scene);
