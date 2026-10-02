@@ -45,7 +45,7 @@ include(sWM2ResourcesPath + "/WM2 Settings UI.dsa");
 	var VALUE_EMISSIVE = "Emissive"
 
 	var ARRAY_SEPARATOR = ",,";
-	var ARR_HUMAN_FIGURES_NAMES = ["Genesis", "Genesis2Female", "Genesis2Male", "Genesis3Female", "Genesis3Male", "Genesis8Female", "Genesis8Male", "Genesis8_1Female", "Genesis8_1Male", "Genesis9", "Genesis9_1", "Genesis10", "Genesis10Female", "Genesis10Male"];
+	var ARR_HUMAN_FIGURES_NAMES = ["Genesis", "Genesis2Female", "Genesis2Male", "Genesis3Female", "Genesis3Male", "Genesis8Female", "Genesis8Male", "Genesis8_1Female", "Genesis8_1Male", "Genesis9"];
 	var oWM2Config = WM2Support.load(PATH_ICONS).config;
 
 	var nModifierKeyState = App.modifierKeyState();
@@ -2312,7 +2312,17 @@ include(sWM2ResourcesPath + "/WM2 Settings UI.dsa");
 	\*-----------------------------------------------------------------*/
 	if (!CheckForAnotherProcessActive()) return;
 	if (!(oNode = Scene.getPrimarySelection())) return err("Please, select a human figure to proceed.");
-	if (!(oHumanFigure = GetCurrentHumanFigure(oNode))) return err("Select a supported figure. Use Wearables Manager Supported Figures to add a custom figure."); //get genesis figure
+	oHumanFigure = GetCurrentHumanFigure(oNode);
+	if (!oHumanFigure) {
+		if (!WM2Support.selectedFigure(oNode)) return err("Select a live independent figure or one of its bones.");
+		var wmFigureSetup = WM2ShowSupportedFigures(PATH_ICONS);
+		if (!wmFigureSetup.saved) return;
+		oWM2Config = WM2Support.load(PATH_ICONS).config;
+		if (!CheckForAnotherProcessActive()) return;
+		oNode = Scene.getPrimarySelection();
+		oHumanFigure = GetCurrentHumanFigure(oNode);
+		if (!oHumanFigure) return err("The current selection is still unsupported. No wearables were transferred.");
+	}
 	var oAnotherFigure = GetAnotherHumanFigureParentedToTheCurrent(oHumanFigure);
 	if (oAnotherFigure) return err("Human figure '" + oAnotherFigure.getLabel() + "' is parented to " + oHumanFigure.getLabel() + ". This could potentially cause problems. Please unparent it before continuing.");
 
@@ -2344,9 +2354,10 @@ include(sWM2ResourcesPath + "/WM2 Settings UI.dsa");
 			return;
 		}
 
+		var arrMovetoGroup = arrAll[0].filter(FilterParentedToHumanFigureAndNotAnExemption, GetDefaultTransferExemptionsList(oHumanFigure));
+		var arrMoveToFigurePairs = arrAll[1];
+		if (!arrMovetoGroup.length && !arrMoveToFigurePairs.length) { WM2NoEligibleTransfers(); SetStatusFinished(); return; }
 		WM2BeginUndo();
-
-		var arrMovetoGroup = arrAll[0];
 		var arrShells = GetAllShells(oHumanFigure, oGroup, true); // get array with all geoshells
 		if (arrMovetoGroup.length > 0) {
 			//Move wearables into group
@@ -2362,7 +2373,6 @@ include(sWM2ResourcesPath + "/WM2 Settings UI.dsa");
 			for (var i = 0; i < arrMovetoGroup.length; i++) PlaceWearableIntoGroup(oHumanFigure, arrMovetoGroup[i], oGroup);
 		}
 
-		var arrMoveToFigurePairs = arrAll[1];
 		if (arrMoveToFigurePairs.length > 0) {
 			if (!WM2RestoreWearablePairs(oHumanFigure, oGroup, arrMoveToFigurePairs, arrShells)) {
 				oRemoveQueue.Clear(); WM2CancelUndo(); SetStatusFinished(); return;
@@ -2381,15 +2391,15 @@ include(sWM2ResourcesPath + "/WM2 Settings UI.dsa");
 		/*
 		<------------ Move wearables into group ------------->
 		*/
-		WM2BeginUndo();
-		var oGroup = GetBelongingsGroup(oHumanFigure, true);
-
 		var arrChildren = oHumanFigure.getNodeChildren(true);
 		var arrShells = arrChildren.filter(FilterShells); // get array with all geoshells
 		//get an array of nodes parented to the human figure and not to another figure and where no transfer exemptions (like eyelashes)
 		//also, it filters out marked for not transferring wearables
 		arrChildren = arrChildren.filter(FilterParentedToHumanFigureAndNotAnExemption, GetDefaultTransferExemptionsList(oHumanFigure));
 		if (bUseTransferMark) arrChildren = arrChildren.filter(FilterMarkedForTransferring);
+		if (!arrChildren.length) { WM2NoEligibleTransfers(); SetStatusFinished(); return; }
+		WM2BeginUndo();
+		var oGroup = GetBelongingsGroup(oHumanFigure, true);
 
 
 		//save materials for Shells
@@ -2513,6 +2523,7 @@ include(sWM2ResourcesPath + "/WM2 Settings UI.dsa");
 	}
 
 	function PlaceWearableIntoGroup(oHumanFigure, oWearable, oGroup) {
+		if (WM2Support.isProtectedTransfer(oWearable, oHumanFigure, oWM2Config)) throw new Error("This item contains a protected child or its ownership changed. Review Supported Figures > Protected Children.");
 		if (!WM2SceneContains(oWearable) || !WM2SceneContains(oHumanFigure) || !WM2SceneContains(oGroup)) throw new Error("A wearable, figure, or storage group is no longer in the scene.");
 		var oParent = oWearable.getNodeParent();
 		if (!WM2SameNode(oParent, oHumanFigure) && !WM2IsBoneOfFigure(oParent, oHumanFigure)) throw new Error("The wearable's parent changed before transfer.");
@@ -2898,7 +2909,7 @@ include(sWM2ResourcesPath + "/WM2 Settings UI.dsa");
 	//and false it its parented to another node
 	function FilterParentedToHumanFigureAndNotAnExemption(oChild) {
 	    if (!oChild || oChild.inherits("DzBone") || !oHumanFigure) return false;
-	    if (!bAltPressed && WM2Support.isProtectedCustomAttachment(oChild, oHumanFigure, oWM2Config)) return false;
+	    if (WM2Support.isProtectedTransfer(oChild, oHumanFigure, oWM2Config)) return false;
 	    var oNode = oChild;
 	    while (oNode && !WM2SameNode(oNode, oHumanFigure)) {
 	        if (this && this.indexOf(oNode.name) > -1) return false;
@@ -2958,24 +2969,10 @@ include(sWM2ResourcesPath + "/WM2 Settings UI.dsa");
 	}
 
 	function GetDefaultTransferExemptionsList(oFigure) {
-		if (!oFigure) return false;
-		var sName = oFigure.name;
-		var arrExemptions = [];
-		if (bAltPressed) return arrExemptions;
-		if (sName == "Genesis9") {
-			arrExemptions = ["Genesis9Eyelashes", "Genesis9Tear", "Genesis9Eyes", "Genesis9Mouth", "G9EyebrowCards"]; //, "SHTongue_933"];
-		} else if (sName == "Genesis8_1Female") {
-			arrExemptions = ["Genesis8_1FemaleEyelashes", "Female 8_1 Tear"];
-		} else if (sName == "Genesis8_1Male") {
-			arrExemptions = ["Genesis8_1MaleEyelashes", "Male 8_1 Tear"];
-		} else if (sName == "Genesis8Female") {
-			arrExemptions = ["Genesis8FemaleEyelashes"];
-		} else if (sName == "Genesis8Male") {
-			arrExemptions = ["Genesis8MaleEyelashes"];
-		}
-
-		return arrExemptions;
+		if (!oFigure) return [];
+		return WM2Support.protectedChildNames(oWM2Config, WM2Support.figureInternalName(oFigure));
 	}
+
 
 	function GetExtraMaterialsArray(oShape, arrDefaultMaterialsNames) {
 		if (!arrDefaultMaterialsNames || !oShape) return false;
@@ -3254,7 +3251,10 @@ include(sWM2ResourcesPath + "/WM2 Settings UI.dsa");
 		}
 		connect(wmIconRulesButton, "clicked()", wmIconRulesButton, WM2OpenIconRulesFromDialog);
 		var wmFiguresButton = WM2SettingsButton(wmSettingsRow, "Supported Figures...", PATH_ICONS, "Wearables Manager - Group.png");
-		connect(wmFiguresButton, "clicked()", wmFiguresButton, function () { WM2ShowSupportedFigures(PATH_ICONS); });
+		connect(wmFiguresButton, "clicked()", wmFiguresButton, function () {
+			var result = WM2ShowSupportedFigures(PATH_ICONS);
+			if (result.saved) oWM2Config.protectedChildren = WM2Support.clone(result.config.protectedChildren);
+		});
 
 		// 2 H Container for Scrool areas
 		var wcontScrollsHolder = new DzHGroupBox(wgroupOuter);

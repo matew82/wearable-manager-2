@@ -1,7 +1,14 @@
 // Shared ES5 settings support. Include at global scope; including does not access disk.
 var WM2Support = (function () {
     var FILE_NAME = "WM2 Settings.json";
-    var BUILTINS = ["Genesis", "Genesis2Female", "Genesis2Male", "Genesis3Female", "Genesis3Male", "Genesis8Female", "Genesis8Male", "Genesis8_1Female", "Genesis8_1Male", "Genesis9", "Genesis9_1", "Genesis10", "Genesis10Female", "Genesis10Male"];
+    var BUILTINS = ["Genesis", "Genesis2Female", "Genesis2Male", "Genesis3Female", "Genesis3Male", "Genesis8Female", "Genesis8Male", "Genesis8_1Female", "Genesis8_1Male", "Genesis9"];
+    var DEFAULT_PROTECTION = [
+        {figure:"Genesis9",children:["Genesis9Eyelashes","Genesis9Tear","Genesis9Eyes","Genesis9Mouth","G9EyebrowCards"]},
+        {figure:"Genesis8_1Female",children:["Genesis8_1FemaleEyelashes","Female 8_1 Tear"]},
+        {figure:"Genesis8_1Male",children:["Genesis8_1MaleEyelashes","Male 8_1 Tear"]},
+        {figure:"Genesis8Female",children:["Genesis8FemaleEyelashes"]},
+        {figure:"Genesis8Male",children:["Genesis8MaleEyelashes"]}
+    ];
     var MAX_RULES = 256, MAX_FIGURES = 256, MAX_PATTERN = 256;
     var MAX_NAME = 256, MAX_ICON = 128, MAX_FILE_BYTES = 262144;
     var serial = 0;
@@ -77,15 +84,15 @@ var WM2Support = (function () {
         return result;
     }
     function clone(value) { return cloneValue(value, [], 0); }
-    function defaults() { return {schema:1, iconRules:[], supportedFigures:BUILTINS.slice(0)}; }
+    function defaults() { return {schema:2, iconRules:[], supportedFigures:BUILTINS.slice(0), protectedChildren:clone(DEFAULT_PROTECTION)}; }
     function invalid(message) { return {ok:false, config:null, message:message}; }
     function validate(config) {
         try {
-            if (!object(config) || !keysExactly(config, {schema:1, iconRules:1, supportedFigures:1})) return invalid("Settings must contain only schema, iconRules and supportedFigures.");
-            if (config.schema !== 1) return invalid("Unsupported settings schema; this version supports schema 1.");
+            if (!object(config) || (config.schema !== 1 && config.schema !== 2)) return invalid("Unsupported settings schema; this version supports schema 2 and migrates schema 1.");
+            if (!keysExactly(config, config.schema === 1 ? {schema:1, iconRules:1, supportedFigures:1} : {schema:1, iconRules:1, supportedFigures:1, protectedChildren:1})) return invalid("Settings fields do not match their schema.");
             if (!denseArray(config.iconRules, MAX_RULES)) return invalid("iconRules must be a dense array with at most " + MAX_RULES + " entries.");
             if (!denseArray(config.supportedFigures, MAX_FIGURES)) return invalid("supportedFigures must be a dense array with at most " + MAX_FIGURES + " entries.");
-            var normalized = {schema:1, iconRules:[], supportedFigures:[]};
+            var normalized = {schema:2, iconRules:[], supportedFigures:[], protectedChildren:[]};
             var ruleSeen = {}, foldedSeen = {}, warnings = [], nameSeen = {}, kinds = {exactName:1, exactLabel:1, nameWord:1, labelWord:1, labelPrefix:1, namePrefix:1};
             for (var i = 0; i < config.iconRules.length; i++) {
                 var rule = config.iconRules[i];
@@ -110,6 +117,22 @@ var WM2Support = (function () {
                 nameSeen[nameKey] = true;
                 normalized.supportedFigures.push(name);
             }
+            var profiles = config.schema === 1 ? DEFAULT_PROTECTION : config.protectedChildren, profileSeen = {};
+            if (!denseArray(profiles, MAX_FIGURES)) return invalid("protectedChildren must be a dense array with at most " + MAX_FIGURES + " profiles.");
+            for (var p = 0; p < profiles.length; p++) {
+                var profile=profiles[p], childSeen={}, children=[];
+                if (!object(profile) || !keysExactly(profile,{figure:1,children:1}) || !cleanString(profile.figure,MAX_NAME)) return invalid("Protected-child profiles require an exact figure name and children.");
+                if (own.call(profileSeen,"_"+profile.figure)) return invalid("Duplicate protected-child figure profile.");
+                profileSeen["_"+profile.figure]=true;
+                if (!denseArray(profile.children,MAX_FIGURES)) return invalid("A protected-child profile allows at most " + MAX_FIGURES + " exact internal names.");
+                for (var c=0;c<profile.children.length;c++) {
+                    var child=profile.children[c];
+                    if (!cleanString(child,MAX_NAME) || own.call(childSeen,"_"+child)) return invalid("Protected-child names must be nonempty, exact and unique.");
+                    childSeen["_"+child]=true;children.push(child);
+                }
+                normalized.protectedChildren.push({figure:profile.figure,children:children});
+            }
+            if (config.schema === 1) warnings.unshift("Schema 1 settings are migrated in memory; saved figure names and icons are preserved. Save writes schema 2 with protected-child defaults.");
             return {ok:true, config:normalized, message:warnings.join(" ")};
         } catch (e) { return invalid("Settings could not be validated: " + String(e)); }
     }
@@ -152,7 +175,7 @@ var WM2Support = (function () {
         var parsed;
         try { parsed = JSON.parse(read.raw.replace(/^\ufeff/, "")); }
         catch (e) { return {config:defaults(), status:"invalid", message:"WM2 Settings.json is not valid JSON. Defaults are active; an explicit Save can repair it while retaining a backup.", rawToken:read.rawToken, readOnly:false}; }
-        if (object(parsed) && typeof parsed.schema === "number" && isFinite(parsed.schema) && parsed.schema > 1) return {config:defaults(), status:"future-schema", message:"WM2 Settings.json uses schema " + parsed.schema + ". Defaults are active; this version will not overwrite the newer settings.", rawToken:read.rawToken, readOnly:true};
+        if (object(parsed) && typeof parsed.schema === "number" && isFinite(parsed.schema) && parsed.schema > 1 && parsed.schema !== 2) return {config:defaults(), status:"future-schema", message:"WM2 Settings.json uses unsupported schema " + parsed.schema + ". Defaults are active; this version will not overwrite these settings.", rawToken:read.rawToken, readOnly:true};
         var result = validate(parsed);
         if (!result.ok) return {config:defaults(), status:"invalid", message:result.message + " Defaults are active; an explicit Save can repair the file while retaining a backup.", rawToken:read.rawToken, readOnly:false};
         return {config:result.config, status:"ok", message:result.message, rawToken:read.rawToken, readOnly:false};
@@ -302,7 +325,7 @@ var WM2Support = (function () {
         } catch(e) { return fail("error","Icon import failed: "+String(e)); }
         finally { try { if(source && typeof source.deleteLater === "function")source.deleteLater(); }catch(e){} for(var release=0;release<infos.length;release++)try{if(typeof infos[release].deleteLater === "function")infos[release].deleteLater();}catch(e){} }
     }
-    return {defaults:defaults, validate:validate, load:load, save:save, clone:clone, isIconBasename:iconBasename, importIcon:importIcon};
+    return {defaults:defaults, defaultProtectedChildren:function(){return clone(DEFAULT_PROTECTION);}, validate:validate, load:load, save:save, clone:clone, isIconBasename:iconBasename, importIcon:importIcon};
 })();
 
 (function () {
@@ -463,7 +486,7 @@ function WM2InstallSupportedFigures(oSupport) {
     if (!oSupport || typeof oSupport !== "object") throw new Error("Wearables support module is unavailable.");
     if (typeof oSupport.defaults !== "function") throw new Error("Wearables support defaults are unavailable.");
     var oDefaults = oSupport.defaults();
-    if (!oDefaults || oDefaults.schema !== 1 || !Array.isArray(oDefaults.supportedFigures)) throw new Error("Wearables support defaults are invalid.");
+    if (!oDefaults || oDefaults.schema !== 2 || !Array.isArray(oDefaults.supportedFigures)) throw new Error("Wearables support defaults are invalid.");
     // The shared configuration factory is the sole source of shipped defaults.
     var arrBuiltInNames = oDefaults.supportedFigures.slice(0);
 
@@ -482,11 +505,25 @@ function WM2InstallSupportedFigures(oSupport) {
         return !!(a && b && a.id === b.id && a.type === b.type);
     }
     function sceneNodes() {
-        try { return Scene.getNodeList(); } catch (e) { return null; }
+        try {
+            var raw=Scene.getNodeList(),count=raw && raw.length,nodes=[],index={};
+            if(typeof count!=="number" || !isFinite(count) || count<0 || Math.floor(count)!==count || count>20000)return null;
+            for(var i=0;i<count;i++){
+                var node=raw[i],identity=key(node);if(!identity)return null;
+                var token="_"+identity.type.length+":"+identity.type+identity.id;
+                index[token]=Object.prototype.hasOwnProperty.call(index,token)?false:node;
+                nodes.push(node);
+            }
+            nodes._wm2LiveIndex=index;return nodes;
+        } catch (e) { return null; }
     }
     function live(oNode, arrNodes) {
         var oKey = key(oNode), oFound = null;
         if (!oKey || !arrNodes) return null;
+        if(arrNodes._wm2LiveIndex){
+            var token="_"+oKey.type.length+":"+oKey.type+oKey.id;
+            return Object.prototype.hasOwnProperty.call(arrNodes._wm2LiveIndex,token)?arrNodes._wm2LiveIndex[token]||null:null;
+        }
         for (var i = 0; i < arrNodes.length; i++) {
             if (!same(oNode, arrNodes[i])) continue;
             if (oFound) return null; // Repeated session identity is ambiguous, regardless of name.
@@ -495,11 +532,15 @@ function WM2InstallSupportedFigures(oSupport) {
         return oFound;
     }
     function internalName(oNode) {
-        try { return typeof oNode.name === "string" ? oNode.name : ""; } catch (e) { return ""; }
+        try {
+            if (!oNode) return "";
+            if (typeof oNode.getName === "function") { var name=oNode.getName();if(typeof name==="string" && name.length)return name; }
+            return typeof oNode.name === "string" ? oNode.name : "";
+        } catch (e) { return ""; }
     }
     function names(oConfig) {
         if (!oConfig && typeof oSupport.defaults === "function") oConfig = oSupport.defaults();
-        return oConfig && oConfig.schema === 1 && Array.isArray(oConfig.supportedFigures) ? oConfig.supportedFigures : null;
+        return oConfig && (oConfig.schema === 1 || oConfig.schema === 2) && Array.isArray(oConfig.supportedFigures) ? oConfig.supportedFigures : null;
     }
     function skeleton(oNode) {
         return !!(oNode && oNode.inherits("DzSkeleton") && !oNode.inherits("DzBone") && !oNode.inherits("DzGroupNode"));
@@ -577,13 +618,30 @@ function WM2InstallSupportedFigures(oSupport) {
             if (!sName) return { ok: false, config: oConfig, message: "The figure must have a nonempty internal name.", figure: oFigure };
             var oNext = oSupport.clone(oValidated.config), bExisting = oNext.supportedFigures.indexOf(sName) >= 0;
             if (!bExisting) oNext.supportedFigures.push(sName);
+            var seeded=0,hasProfile=false;
+            for(var p=0;p<oNext.protectedChildren.length;p++)if(oNext.protectedChildren[p].figure===sName)hasProfile=true;
+            if(arrBuiltInNames.indexOf(sName)<0 && !hasProfile) {
+                var nodes=sceneNodes(),children=[],seen={};
+                if(!nodes || nodes.length>20000)throw new Error("Cannot safely enumerate this figure's attached children.");
+                validateSubtree(oFigure,nodes);
+                for(var c=0;c<nodes.length;c++) {
+                    var child=live(nodes[c],nodes);
+                    if(!child)throw new Error("Scene contains ambiguous or unavailable node identities.");
+                    if(same(child,oFigure) || child.inherits("DzBone"))continue;
+                    if(!below(child,oFigure,nodes))continue;
+                    var childName=internalName(child);
+                    if(!childName)throw new Error("An attached child has no readable internal name; registration was not applied.");
+                    if(!Object.prototype.hasOwnProperty.call(seen,"_"+childName)){seen["_"+childName]=true;children.push(childName);}
+                }
+                oNext.protectedChildren.push({figure:sName,children:children});seeded=children.length;
+            }
             var oFinal = oSupport.validate(oNext);
             if (!oFinal.ok) return { ok: false, config: oConfig, message: oFinal.message, figure: oFigure };
-            return { ok: true, config: oFinal.config, message: bExisting ? "Figure type '" + sName + "' is already supported." : "Figure type '" + sName + "' is now supported.", figure: oFigure };
+            return { ok: true, config: oFinal.config, message: (bExisting ? "Figure type '" + sName + "' is already supported." : "Figure type '" + sName + "' is now supported.") + (seeded ? " Protected " + seeded + " attached child names, including clothing. Review Protected Children to allow movable items." : ""), figure: oFigure };
         } catch (e) { return { ok: false, config: oConfig, message: String(e), figure: oFigure }; }
     };
-    oSupport.isProtectedCustomAttachment = function (oNode, oOwner, oConfig) {
-        var arrNodes = sceneNodes(), oLiveOwner = live(oOwner, arrNodes);
+    oSupport.isProtectedCustomAttachment = function (oNode, oOwner, oConfig, knownNodes) {
+        var arrNodes = knownNodes || sceneNodes(), oLiveOwner = live(oOwner, arrNodes);
         if (!supported(oLiveOwner, oConfig, arrNodes) || arrBuiltInNames.indexOf(internalName(oLiveOwner)) >= 0) return false;
         var oCurrent = live(oNode, arrNodes);
         if (!oCurrent) return true;
@@ -612,6 +670,71 @@ function WM2InstallSupportedFigures(oSupport) {
             }
             return false;
         } catch (e) { return true; }
+    };
+    function below(node,ancestor,nodes) {
+        var current=node,seen=[];
+        while(current) {
+            if(same(current,ancestor))return true;
+            for(var i=0;i<seen.length;i++)if(same(seen[i],current))throw new Error("Child ancestry contains a cycle.");
+            seen.push(current);if(seen.length>nodes.length)throw new Error("Child ancestry is unavailable.");
+            current=current.getNodeParent();
+            if(current){current=live(current,nodes);if(!current)throw new Error("Child ancestry is ambiguous or unavailable.");}
+        }
+        return false;
+    }
+    function validateSubtree(root,nodes) {
+        if(typeof root.getNodeChildren!=="function")throw new Error("Child enumeration is unavailable.");
+        var queue=[root],seen=[];
+        while(queue.length){
+            var parent=queue.pop();
+            for(var s=0;s<seen.length;s++)if(same(seen[s],parent))throw new Error("Child hierarchy contains a cycle or duplicate.");
+            seen.push(parent);if(seen.length>nodes.length)throw new Error("Child hierarchy exceeds live Scene nodes.");
+            if(typeof parent.getNodeChildren!=="function")throw new Error("Child enumeration is unavailable.");
+            var children=parent.getNodeChildren(false),count=children && children.length;
+            if(typeof count!=="number" || !isFinite(count) || count<0 || Math.floor(count)!==count || count>nodes.length)throw new Error("Child enumeration is unavailable.");
+            for(var c=0;c<count;c++){
+                var child=live(children[c],nodes);
+                if(!child || !same(live(child.getNodeParent(),nodes),parent))throw new Error("Child ownership changed or its node is unavailable.");
+                queue.push(child);
+            }
+        }
+    }
+    oSupport.figureInternalName=internalName;
+    oSupport.protectedChildNames=function(config,figureName) {
+        var checked=oSupport.validate(config);if(!checked.ok)throw new Error(checked.message);
+        for(var i=0;i<checked.config.protectedChildren.length;i++)if(checked.config.protectedChildren[i].figure===figureName)return checked.config.protectedChildren[i].children.slice(0);
+        return [];
+    };
+    oSupport.setProtectedChildNames=function(config,figureName,children) {
+        try {
+        var checked=oSupport.validate(config);if(!checked.ok)return checked;
+        var next=oSupport.clone(checked.config),found=false;
+        for(var i=0;i<next.protectedChildren.length;i++)if(next.protectedChildren[i].figure===figureName){next.protectedChildren[i].children=oSupport.clone(children);found=true;break;}
+        if(!found)next.protectedChildren.push({figure:figureName,children:oSupport.clone(children)});
+        return oSupport.validate(next);
+        }catch(e){return {ok:false,config:null,message:"Protected children could not be updated: "+String(e)};}
+    };
+    oSupport.isProtectedTransfer=function(node,owner,config) {
+        try {
+            var nodes=sceneNodes(),current=live(node,nodes),main=live(owner,nodes);
+            if(!nodes || nodes.length>20000 || !current || !supported(main,config,nodes) || same(current,main) || current.inherits("DzBone"))return true;
+            validateSubtree(current,nodes);
+            if(!below(current,main,nodes))return true;
+            var protectedNames=oSupport.protectedChildNames(config,internalName(main)),ancestor=current;
+            while(ancestor && !same(ancestor,main)){
+                if(protectedNames.indexOf(internalName(ancestor))>=0)return true;
+                ancestor=live(ancestor.getNodeParent(),nodes);
+            }
+            if(oSupport.isProtectedCustomAttachment(current,main,config,nodes))return true;
+            // Reparenting carries a whole subtree, including descendants omitted
+            // from the UI. Check its live graph again before any mutation.
+            for(var n=0;n<nodes.length;n++){
+                var child=live(nodes[n],nodes);if(!child)return true;
+                if(child.inherits("DzBone") || same(child,current) || !below(child,current,nodes))continue;
+                if(protectedNames.indexOf(internalName(child))>=0 || oSupport.isProtectedCustomAttachment(child,main,config,nodes) || (figureType(child) && names(config).indexOf(internalName(child))>=0))return true;
+            }
+            return false;
+        }catch(e){return true;}
     };
     return oSupport;
 }

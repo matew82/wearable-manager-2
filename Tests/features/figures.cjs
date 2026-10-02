@@ -17,6 +17,7 @@ function world(fresh=false){
   constructor(name,type='DzFigure',parent=null){this.name=this.objectName=name;this.label=name;this.type=type;this.elementID=state.next++;this.parent=parent;this.follow=null;this.grafts=[];state.nodes.push(this);}
   inherits(t){if(this.disposed)throw Error('Disposed wrapper');return t==='DzNode'||t===this.type||(t==='DzSkeleton'&&['DzFigure','DzLegacyFigure'].includes(this.type));}
   className(){return this.type;}getLabel(){return this.label;}getFollowTarget(){return alias(this.follow);}
+  getNodeChildren(){return state.nodes.filter(n=>n.parent===this).map(alias);}
   getNodeParent(){return alias(this.parent);}getSkeleton(){let n=this.parent,seen=new Set();while(n&&!n.inherits('DzSkeleton')){if(seen.has(n))return null;seen.add(n);n=n.parent;}return alias(n);}
   getNumGraftFigures(){return this.grafts.length;}getGraftFigure(i){return alias(this.grafts[i]);}
  }
@@ -33,7 +34,7 @@ function world(fresh=false){
 const tests=[];
 function test(name,run){try{run();tests.push({name,pass:true});}catch(e){tests.push({name,pass:false,error:e.message});}}
 const initial=world(),builtins=Array.from(initial.support.builtInFigureNames());
-assert.strictEqual(builtins.length,14);
+assert.strictEqual(builtins.length,10);
 for(const name of builtins)test('default '+name+' is supported',()=>{const w=world(),n=new w.Node(name);assert.strictEqual(w.support.isSupportedFigure(n,w.config),true);assert.strictEqual(w.support.selectedFigure(n),n);assert.strictEqual(w.support.isCustomFigure(n,w.config),false);});
 test('exact names do not admit Genesis prefixes or suffixes',()=>{const w=world();for(const name of ['Genesis11','Genesis9Mouth','Genesis9 extra','myGenesis9'])assert.strictEqual(w.support.isSupportedFigure(new w.Node(name),w.config),false);});
 test('empty whitelist and removing a built-in are respected',()=>{const w=world(),n=new w.Node('Genesis9');w.config.supportedFigures=[];assert.strictEqual(w.support.isSupportedFigure(n,w.config),false);});
@@ -61,10 +62,10 @@ test('repeated scene aliases fail closed',()=>{const w=world(),f=new w.Node('Gen
 test('throwing follow getter rejects owner',()=>{const w=world(),f=new w.Node('Genesis9');f.getFollowTarget=()=>{throw Error('Native getter failure');};assert.strictEqual(w.support.isSupportedFigure(f,w.config),false);});
 test('parent and bone cycles are bounded',()=>{const w=world(),g=new w.Node('Group','DzGroupNode'),f=new w.Node('Genesis9','DzFigure',g);g.parent=g;assert.strictEqual(w.support.selectedFigure(f),null);const a=new w.Node('a','DzBone'),b=new w.Node('b','DzBone',a);a.parent=b;assert.strictEqual(w.support.selectedFigure(a),null);});
 test('duplicate config names are rejected without mutation',()=>{const w=world(),f=new w.Node('DragonRig');w.config.supportedFigures.push('Genesis9');const before=JSON.stringify(w.config),a=w.support.addSupportedFigure(w.config,f);assert.strictEqual(a.ok,false);assert.strictEqual(JSON.stringify(w.config),before);});
-test('existing registry registration returns a copy',()=>{const w=world(),f=new w.Node('Genesis9'),a=w.support.addSupportedFigure(w.config,f);assert(a.ok);assert.notStrictEqual(a.config,w.config);assert.strictEqual(a.config.supportedFigures.length,14);});
-test('registration preserves iconRules and schema',()=>{const w=world(),f=new w.Node('DragonRig');w.config.iconRules.push({kind:'exactName',pattern:'Prop',icon:'Wearables Manager - Bag.png'});const before=JSON.stringify(w.config),a=w.support.addSupportedFigure(w.config,f);assert(a.ok);assert.strictEqual(a.config.schema,1);assert.deepStrictEqual(JSON.parse(JSON.stringify(a.config.iconRules)),JSON.parse(JSON.stringify(w.config.iconRules)));assert.strictEqual(JSON.stringify(w.config),before);});
+test('existing registry registration returns a copy',()=>{const w=world(),f=new w.Node('Genesis9'),a=w.support.addSupportedFigure(w.config,f);assert(a.ok);assert.notStrictEqual(a.config,w.config);assert.strictEqual(a.config.supportedFigures.length,10);});
+test('registration preserves iconRules and schema',()=>{const w=world(),f=new w.Node('DragonRig');w.config.iconRules.push({kind:'exactName',pattern:'Prop',icon:'Wearables Manager - Bag.png'});const before=JSON.stringify(w.config),a=w.support.addSupportedFigure(w.config,f);assert(a.ok);assert.strictEqual(a.config.schema,2);assert.deepStrictEqual(JSON.parse(JSON.stringify(a.config.iconRules)),JSON.parse(JSON.stringify(w.config.iconRules)));assert.strictEqual(JSON.stringify(w.config),before);});
 test('registry matches internal name rather than display label or case',()=>{const w=world(),f=new w.Node('dragonrig');f.label='Genesis9';w.config.supportedFigures.push('DragonRig');assert.strictEqual(w.support.isSupportedFigure(f,w.config),false);});
-test('invalid config rejects registration',()=>{const w=world(),f=new w.Node('DragonRig');w.config.schema=2;assert.strictEqual(w.support.addSupportedFigure(w.config,f).ok,false);});
+test('invalid config rejects registration',()=>{const w=world(),f=new w.Node('DragonRig');w.config.schema=3;assert.strictEqual(w.support.addSupportedFigure(w.config,f).ok,false);});
 test('whitespace in valid internal name is preserved exactly',()=>{const w=world(),f=new w.Node(' Dragon Rig '),a=w.support.addSupportedFigure(w.config,f);assert(a.ok);assert(a.config.supportedFigures.includes(' Dragon Rig '));assert.strictEqual(w.support.isSupportedFigure(f,a.config),true);});
 test('empty or control-character names reject registration',()=>{const w=world();for(const name of ['', '\t'])assert.strictEqual(w.support.addSupportedFigure(w.config,new w.Node(name)).ok,false);});
 test('registration respects root registry size limit',()=>{const w=world();w.config.supportedFigures=Array.from({length:256},(_,i)=>'Rig'+i);const before=JSON.stringify(w.config),a=w.support.addSupportedFigure(w.config,new w.Node('Extra'));assert.strictEqual(a.ok,false);assert.strictEqual(JSON.stringify(w.config),before);});

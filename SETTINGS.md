@@ -29,18 +29,26 @@ A missing or unreadable configured PNG uses WM2's existing automatic icon choice
 
 ## Supported figures
 
-The list starts with the fourteen shipped Genesis internal names. Select a custom independent figure or one of its bones and choose **Add Selected Figure**. A bone resolves to its owning figure. Fitted wearables, props, groups and figures attached under another skeleton cannot be registered as independent owners.
+Fresh settings start with ten known Genesis internal names, through Genesis9. The four additional compatibility names in the supplied scripts (Genesis9_1 and Genesis10 variants) are no longer fresh defaults. Existing saved names remain intact. Select a custom independent figure or one of its bones and choose **Add Selected Figure**. A bone resolves to its owning figure. The editor shows **Internal name** separately from **Visible label**. Fitted wearables, props, groups and figures attached under another skeleton cannot be registered as independent owners.
 
 Entries use exact internal names, so changing a label does not change recognition. Remove edits the draft registry. **Reset Genesis Defaults** adds missing Genesis entries while retaining custom entries.
 
-Changes apply on the next WM2 run. An open transfer dialog retains its current figure registry. Re-add a removed figure type before restoring its stored wearables.
+An unsupported selected independent figure opens the editor before any transfer. After Save, WM2 reloads settings and checks the current selection and nested figures again. Cancel leaves the scene alone. An open transfer dialog retains its current figure registry, while saved protection applies immediately. Re-add a removed figure type before restoring its stored wearables.
 
-Existing Genesis attachment exemptions remain in place. Custom figures use conservative graft protection; unknown graft relations are preserved. Registering a figure does not infer its body-part names or material layout.
+Select a registry entry and open **Protected Children...** to edit excluded child names. The five existing Genesis attachment profiles are supplied by default. Exact internal names match within that figure's descendants, including same-name copies. Protection includes the child's subtree and any ancestor that would carry it into storage. Full, Menu, Take Off and Put On's removal path check again immediately before parenting or FitTo changes. Alt and transfer marks do not override protection. Already-stored items remain eligible for restoration.
+
+Custom registration initially protects all currently attached nonbone child names, including clothing and props. Review the profile and **Remove Protection** for items you explicitly want to move. Automatic custom-graft safety still applies; unknown graft relations stay protected. Registration uses actual attachments rather than guessing anatomy or material layouts. Review newly added attachments as needed.
+
+Reopen WM2 after changing child protection to refresh its item lists. If nothing is eligible to move, a notice explains the protection/transfer-mark settings; WM2 creates no storage group or snapshot.
+
+**Protect Name** adds the entered name to the child draft. **Use Selected Child** copies a selected attached child's internal name and shows its label. Child **Save** also applies a pending nonempty name, then returns the edited profile to the parent draft. Child **Cancel** discards child edits. Parent Save writes settings; parent Cancel discards the whole draft. **Restore Genesis Protection** adds missing child defaults while retaining custom protection.
 
 ## Saving settings
 
 Save creates or updates `Resources/WM2 Settings.json`. It does not overwrite `Resources/Wearables Manager.json`. If another editor changed the settings, reload before saving. A newer settings schema is read-only. Repairing an invalid settings file retains its original backup and reports the backup path.
 
 ## Validation status
+
+Schema 2 adds bounded protected-child profiles. Schema 1 migrates in memory while preserving every saved figure name and icon rule; the file changes only on an explicit Save. Installation does not rewrite user settings.
 
 These settings changes have source tests and isolated mocks. Native DAZ4/DAZ6 dialog layout, PNG loading and filesystem behavior remain for user runtime verification; these checks do not launch DAZ. The earlier transfer hotfix remains included. The broader metadata/emissive repair candidate is separate and has not been installed with these settings features.

@@ -12,7 +12,7 @@ const source = fs.readFileSync(modulePath, 'utf8');
 const RESOURCE = 'C:/Test WM2/Resources';
 const TARGET = RESOURCE + '/WM2 Settings.json';
 const LEGACY = RESOURCE + '/Wearables Manager.json';
-const BUILTINS = ['Genesis','Genesis2Female','Genesis2Male','Genesis3Female','Genesis3Male','Genesis8Female','Genesis8Male','Genesis8_1Female','Genesis8_1Male','Genesis9','Genesis9_1','Genesis10','Genesis10Female','Genesis10Male'];
+const BUILTINS = ['Genesis','Genesis2Female','Genesis2Male','Genesis3Female','Genesis3Male','Genesis8Female','Genesis8Male','Genesis8_1Female','Genesis8_1Male','Genesis9'];
 const normalize = value => String(value).replace(/\\/g, '/').replace(/\/$/, '');
 const json = value => JSON.parse(JSON.stringify(value));
 function fixture(initial, faults) {
@@ -90,7 +90,7 @@ function test(name,run) {
     try { run(); tests.push({name,pass:true}); }
     catch(error) { tests.push({name,pass:false,error:String(error),stack:error.stack}); }
 }
-function valid() { return {schema:1,iconRules:[],supportedFigures:BUILTINS.slice()}; }
+function valid() { return {schema:2,iconRules:[],supportedFigures:BUILTINS.slice(),protectedChildren:[{"figure":"Genesis9","children":["Genesis9Eyelashes","Genesis9Tear","Genesis9Eyes","Genesis9Mouth","G9EyebrowCards"]},{"figure":"Genesis8_1Female","children":["Genesis8_1FemaleEyelashes","Female 8_1 Tear"]},{"figure":"Genesis8_1Male","children":["Genesis8_1MaleEyelashes","Male 8_1 Tear"]},{"figure":"Genesis8Female","children":["Genesis8FemaleEyelashes"]},{"figure":"Genesis8Male","children":["Genesis8MaleEyelashes"]}]}; }
 function edited() { const config=valid(); config.iconRules.push({kind:'exactLabel',pattern:'Hair',icon:'Hair.png'}); return config; }
 function noMutation(f) { assert.strictEqual(f.events.filter(e=>['write','rename','remove'].includes(e.operation)).length,0); }
 function oldIntact(f,raw) { assert.strictEqual(f.files.get(TARGET).raw,raw); assert.strictEqual(f.files.get(LEGACY).raw,f.legacy); }
@@ -98,9 +98,9 @@ function extras(f) { return [...f.files.keys()].filter(name=>name!==RESOURCE && 
 function backups(f) { return extras(f).filter(name=>name.includes('.wm2-bak-')); }
 
 test('include performs no filesystem operations',()=>{const f=fixture();assert.deepStrictEqual(f.events,[]);});
-test('defaults contain the exact installed 14 names',()=>{assert.deepStrictEqual(json(fixture().support.defaults()),valid());});
+test('defaults contain the ten known Genesis defaults',()=>{assert.deepStrictEqual(json(fixture().support.defaults()),valid());});
 test('defaults are independent clones',()=>{const s=fixture().support;const a=s.defaults();a.supportedFigures.pop();a.iconRules.push({});assert.deepStrictEqual(json(s.defaults()),valid());});
-test('clone recursively isolates rules and arrays',()=>{const s=fixture().support,a=edited(),b=s.clone(a);b.iconRules[0].pattern='Changed';b.supportedFigures.pop();assert.strictEqual(a.iconRules[0].pattern,'Hair');assert.strictEqual(a.supportedFigures.length,14);});
+test('clone recursively isolates rules and arrays',()=>{const s=fixture().support,a=edited(),b=s.clone(a);b.iconRules[0].pattern='Changed';b.supportedFigures.pop();assert.strictEqual(a.iconRules[0].pattern,'Hair');assert.strictEqual(a.supportedFigures.length,10);});
 test('clone refuses cycles and executable values',()=>{const s=fixture().support,a={};a.self=a;assert.throws(()=>s.clone(a));assert.throws(()=>s.clone({f:()=>1}));});
 test('all four icon rule kinds validate',()=>{const c=valid();c.iconRules=['exactName','exactLabel','nameWord','labelWord'].map(kind=>({kind,pattern:'same',icon:'my icon.PNG'}));assert.strictEqual(fixture().support.validate(c).ok,true);});
 test('empty supported list is intentionally valid',()=>{const c=valid();c.supportedFigures=[];assert.strictEqual(fixture().support.validate(c).ok,true);});
@@ -108,8 +108,8 @@ test('users can remove builtins and append exact custom names',()=>{const c=vali
 test('validation does not trim or mutate literal names/patterns',()=>{const c=edited();c.iconRules[0].pattern=' Hair ';c.supportedFigures=[' Wolf '];const v=fixture().support.validate(c);assert.strictEqual(v.ok,true);assert.deepStrictEqual(json(v.config),c);v.config.iconRules[0].pattern='other';assert.strictEqual(c.iconRules[0].pattern,' Hair ');});
 for(const value of [null,[],true,'config',0]) test('reject invalid config root '+String(value),()=>assert.strictEqual(fixture().support.validate(value).ok,false));
 for(const key of ['other','__proto__','constructor']) test('reject unknown root key '+key,()=>{const c=JSON.parse(JSON.stringify(valid()).slice(0,-1)+',"'+key+'":1}');assert.strictEqual(fixture().support.validate(c).ok,false);});
-for(const schema of [0,2,1.5,'1',true,null]) test('reject unsupported schema '+String(schema),()=>{const c=valid();c.schema=schema;assert.strictEqual(fixture().support.validate(c).ok,false);});
-for(const key of ['schema','iconRules','supportedFigures']) test('reject missing field '+key,()=>{const c=valid();delete c[key];assert.strictEqual(fixture().support.validate(c).ok,false);});
+for(const schema of [0,3,1.5,'1',true,null]) test('reject unsupported schema '+String(schema),()=>{const c=valid();c.schema=schema;assert.strictEqual(fixture().support.validate(c).ok,false);});
+for(const key of ['schema','iconRules','supportedFigures','protectedChildren']) test('reject missing field '+key,()=>{const c=valid();delete c[key];assert.strictEqual(fixture().support.validate(c).ok,false);});
 test('reject duplicate literal icon rule even with different icon',()=>{const c=edited();c.iconRules.push({kind:'exactLabel',pattern:'Hair',icon:'Other.png'});assert.strictEqual(fixture().support.validate(c).ok,false);});
 test('normalized label tie remains allowed for matcher row ordering',()=>{const c=edited();c.iconRules.push({kind:'exactLabel',pattern:'Hair (1)',icon:'Other.png'});assert.strictEqual(fixture().support.validate(c).ok,true);});
 test('exactLabel containing only a terminal copy suffix is rejected',()=>{const c=edited();c.iconRules[0].pattern=' (1)';assert.strictEqual(fixture().support.validate(c).ok,false);});
@@ -127,7 +127,7 @@ test('reject rule user-code, regex and unknown fields',()=>{for(const rule of [{
 test('missing load returns defaults with reusable missing token',()=>{const f=fixture(),r=f.support.load(RESOURCE);assert.strictEqual(r.status,'missing');assert.strictEqual(r.readOnly,false);assert.strictEqual(typeof r.rawToken,'string');assert.deepStrictEqual(json(r.config),valid());noMutation(f);});
 test('malformed JSON load warns without changing its bytes',()=>{const raw='{broken',f=fixture(raw),r=f.support.load(RESOURCE);assert.strictEqual(r.status,'invalid');assert.strictEqual(r.readOnly,false);assert.ok(r.message);assert.strictEqual(typeof r.rawToken,'string');oldIntact(f,raw);noMutation(f);});
 test('invalid schema shape load warns without modifying original',()=>{const raw='{"schema":1,"unexpected":true}',f=fixture(raw),r=f.support.load(RESOURCE);assert.strictEqual(r.status,'invalid');oldIntact(f,raw);noMutation(f);});
-test('future schema is read-only and cannot be saved with matching token',()=>{const raw='{"schema":2,"future":{"keep":true}}',f=fixture(raw),r=f.support.load(RESOURCE),saved=f.support.save(RESOURCE,edited(),r.rawToken);assert.strictEqual(r.status,'future-schema');assert.strictEqual(r.readOnly,true);assert.strictEqual(saved.ok,false);oldIntact(f,raw);noMutation(f);});
+test('future schema is read-only and cannot be saved with matching token',()=>{const raw='{"schema":3,"future":{"keep":true}}',f=fixture(raw),r=f.support.load(RESOURCE),saved=f.support.save(RESOURCE,edited(),r.rawToken);assert.strictEqual(r.status,'future-schema');assert.strictEqual(r.readOnly,true);assert.strictEqual(saved.ok,false);oldIntact(f,raw);noMutation(f);});
 test('future schema remains refused even when old token is stale',()=>{const f=fixture(),token=f.support.load(RESOURCE).rawToken;const raw='{"schema":99}';f.files.set(TARGET,{type:'file',raw});assert.strictEqual(f.support.save(RESOURCE,edited(),token).ok,false);oldIntact(f,raw);noMutation(f);});
 test('fractional newer schema remains read-only',()=>{const raw='{"schema":1.5}',f=fixture(raw),r=f.support.load(RESOURCE);assert.strictEqual(r.status,'future-schema');assert.strictEqual(f.support.save(RESOURCE,edited(),r.rawToken).ok,false);oldIntact(f,raw);noMutation(f);});
 test('BOM JSON loads with exact raw token',()=>{const raw='\ufeff'+JSON.stringify(valid()),f=fixture(raw),r=f.support.load(RESOURCE);assert.strictEqual(r.status,'ok');assert.ok(r.rawToken.endsWith(raw));noMutation(f);});
