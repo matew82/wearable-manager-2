@@ -22,6 +22,9 @@ function environment(options={}) {
   function DzWidget(parent) {Widget.call(this,parent);} inherit(DzWidget);
   function DzLabel(parent) {Widget.call(this,parent,'DzLabel');this.text='';}inherit(DzLabel);DzLabel.PlainText=0;DzLabel.AlignHCenter=4;
   function DzPushButton(parent) {Widget.call(this,parent,'DzPushButton');this.text='';}inherit(DzPushButton);
+  DzPushButton.prototype.setCheckable=function(value){this.checkable=!!value;};
+  function DzCheckBox(parent){Widget.call(this,parent,'DzCheckBox');this._checked=false;}inherit(DzCheckBox);
+  Object.defineProperty(DzCheckBox.prototype,'checked',{get(){return this._checked;},set(value){const changed=this._checked!==!!value;this._checked=!!value;if(changed)emit(this,'toggled(bool)',this._checked);}});
   function DzComboBox(parent) {Widget.call(this,parent,'DzComboBox');this.items=[];this._currentItem=-1;}inherit(DzComboBox);
   DzComboBox.prototype.addItem=function(text){this.items.push(String(text));if(this._currentItem<0)this.currentItem=0;};
   Object.defineProperty(DzComboBox.prototype,'currentItem',{get(){return this._currentItem;},set(value){const changed=this._currentItem!==Number(value);this._currentItem=Number(value);if(changed)emit(this,'currentIndexChanged(int)',this._currentItem);}});
@@ -66,12 +69,12 @@ function environment(options={}) {
   const sceneTarget={kind:'Scene',signals:{},getNodeList(){g.sceneReads++;if(options.enumerationFault)throw Error('enumeration failed');return options.hostList?host(g.nodes):g.nodes;},getPrimarySelection(){g.sceneReads++;return g.selected;},getSelectedNodeList(){g.sceneReads++;return options.hostList?host(g.selectedNodes):g.selectedNodes;},getNumNodes(){g.sceneReads++;if(options.enumerationFault)throw Error('enumeration failed');return g.nodes.length;},getNode(i){g.sceneReads++;return g.nodes[i]||null;},getNumSelectedNodes(){g.sceneReads++;return g.selectedNodes.length;},getSelectedNode(i){g.sceneReads++;return g.selectedNodes[i]||null;}};
   if(options.listOnly){sceneTarget.getNumNodes=sceneTarget.getNode=sceneTarget.getNumSelectedNodes=sceneTarget.getSelectedNode=undefined;}
   const Scene = new Proxy(sceneTarget,{get(target,key){if(key in target)return target[key];g.sceneWrites++;throw new Error('Forbidden Scene call '+String(key));}});
-  const allowedSignals={DzComboBox:['currentIndexChanged(int)'],DzLineEdit:['textChanged(const QString&)'],DzListBox:['selectionChanged(int)'],DzPushButton:['clicked()'],Scene:['nodeSelectionListChanged()']};
+  const allowedSignals={DzComboBox:['currentIndexChanged(int)'],DzLineEdit:['textChanged(const QString&)'],DzListBox:['selectionChanged(int)'],DzPushButton:['clicked()'],DzCheckBox:['toggled(bool)'],Scene:['nodeSelectionListChanged()']};
   function connect(widget,signature,cb){assert((allowedSignals[widget.kind]||[]).includes(signature),'Undocumented mock signal '+widget.kind+'.'+signature);(widget.signals[signature]||(widget.signals[signature]=[])).push(cb);}
   function disconnect(widget,signature,cb){assert.equal(widget,Scene);const list=widget.signals[signature]||[],index=list.indexOf(cb);assert(index>=0);list.splice(index,1);g.disconnected++;}
   g.setSelection=function(nodes){g.selectedNodes=nodes;g.selected=nodes[0]||null;emit(Scene,'nodeSelectionListChanged()');};
   const FileDialog={doFileDialog(...args){g.browseCalls.push(args);return (options.pickedFiles||[]).shift()||'';}};
-  const context=vm.createContext({Font,Size,Image,Pixmap,DzDir,DzFile,DzWidget,DzLabel,DzPushButton,DzComboBox,DzLineEdit,DzListBox,DzTextEdit,DzScrollArea,DzVBoxLayout:Layout,DzHBoxLayout:Layout,DzBasicDialog,Scene,FileDialog,connect,disconnect});
+  const context=vm.createContext({Font,Size,Image,Pixmap,DzDir,DzFile,DzWidget,DzLabel,DzPushButton,DzCheckBox,DzComboBox,DzLineEdit,DzListBox,DzTextEdit,DzScrollArea,DzVBoxLayout:Layout,DzHBoxLayout:Layout,DzBasicDialog,Scene,FileDialog,connect,disconnect});
   vm.runInContext(sources.support,context,{filename:files.support});
 
 
@@ -79,10 +82,16 @@ function environment(options={}) {
   support.load=function(resourcePath){g.ioCalls++;assert.equal(resourcePath,'C:/scratch/Resources');return {config:plain(config),status:options.status||'ok',readOnly:!!options.readOnly,message:options.message||'',rawToken:token};};
   support.save=function(resourcePath,cfg,expectedRawToken){g.ioCalls++;assert.equal(resourcePath,'C:/scratch/Resources');g.saved.push({config:plain(cfg),expectedRawToken});return options.saveFailure?{ok:false,message:'Forced save failure',rawToken:'changed-disk-token'}:{ok:true,config:plain(cfg),rawToken:'saved-token',message:options.saveMessage||''};};
   vm.runInContext(sources.ui,context,{filename:files.ui});
-  function one(kind){const found=g.widgets.filter(w=>w.kind===kind);assert.equal(found.length,1,kind+' count');return found[0];}
+  function ruleEditor(){const found=g.widgets.filter(w=>w.kind==='DzScrollArea'&&w.wm2IconRules);assert.equal(found.length,1,'Icon rule row controller');return found[0].wm2EditorRows;}
+  function modePicker(){const found=g.widgets.filter(w=>w.wm2ModePicker);assert.equal(found.length,1,'Icon mode controller');return found[0].wm2ModePicker;}
+  // Existing behavioral cases use these adapters to activate the NEW native
+  // buttons. No old dropdown/list widgets are constructed or emulated in g.widgets.
+  const listAdapter={get items(){return Array.from(ruleEditor().entries,e=>e.text+' | '+e.detail);},get currentItem(){return ruleEditor().currentItem;},setSelected(index,on){const list=ruleEditor();if(index<0||index>=list.rows.length)return;if(on)emit(list.rows[index].button,'clicked()');else if(list.currentItem===index)list.select(-1,false);}};
+  const modeAdapter={get items(){return Array.from(modePicker().kinds,kind=>context.WM2SettingsKindLabel(kind));},get currentItem(){return modePicker().currentItem;},set currentItem(index){const picker=modePicker();if(index>=0&&index<picker.buttons.length)emit(picker.buttons[index],'clicked()');},get enabled(){return modePicker().enabled;}};
+  function one(kind){let found=g.widgets.filter(w=>w.kind===kind);if(kind==='DzListBox'&&!found.length)return listAdapter;if(kind==='DzScrollArea'&&found.some(w=>w.wm2Preview))found=found.filter(w=>w.wm2Preview);assert.equal(found.length,1,kind+' count');return found[0];}
   function button(text){const found=g.widgets.filter(w=>w.kind==='DzPushButton'&&w.text===text);assert.equal(found.length,1,'Button '+text);return found[0];}
   function click(text){const w=button(text);assert(w.enabled,'Clicked disabled button '+text);emit(w,'clicked()');}
-  const selectors={one,button,click,editor(){return one('DzScrollArea').wm2EditorRows;},preview(){return one('DzScrollArea').wm2Preview;},kindCombo(){return g.widgets.filter(w=>w.kind==='DzComboBox')[0];},iconCombo(){return g.widgets.filter(w=>w.kind==='DzComboBox')[1];},status(){return g.widgets.filter(w=>w.kind==='DzLabel')[2];}};
+  const selectors={one,button,click,modePicker,ruleEditor,editor(){return g.widgets.find(w=>w.wm2EditorRows).wm2EditorRows;},preview(){return one('DzScrollArea').wm2Preview;},kindCombo(){return modeAdapter;},iconCombo(){return g.widgets.find(w=>w.kind==='DzComboBox');},status(){return g.widgets.filter(w=>w.kind==='DzLabel')[2];}};
   return {g,context,support,model:()=>context.WM2SettingsModel(support,'C:/scratch/Resources','A.png'),...selectors};
 }
 const rule=(pattern,kind='exactName',icon='A.png')=>({kind,pattern,icon});

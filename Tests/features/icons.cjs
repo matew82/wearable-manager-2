@@ -56,7 +56,7 @@ function iconsClass(source,rules,files,withSupport=true,options={}){
   vm.createContext(c);vm.runInContext('String.prototype.mid=function(start,count){return this.substr(start,count);};',c);vm.runInContext(supportSource,c);
   if(!withSupport)c.WM2Support.matchIcon=undefined;
   const start=source.indexOf('function WearablesIconsClass('),end=source.indexOf('function TagImageManagerClass(',start);assert(start>=0&&end>start);
-  vm.runInContext(source.slice(start,end),c);return {icons:new c.WearablesIconsClass(),writes,dirs,get opens(){return opens;},get closes(){return closes;}};
+  vm.runInContext(source.slice(start,end),c);return {icons:new c.WearablesIconsClass(),support:c.WM2Support,writes,dirs,get opens(){return opens;},get closes(){return closes;}};
 }
 for(const file of ['Wearables Manager Full.dsa','Wearables Manager Menu.dsa']) {
   const bytes=fs.readFileSync(path.join(root,file)),source=bytes.toString('utf8');sourceInventory.push({file,sha256:crypto.createHash('sha256').update(bytes).digest('hex')});
@@ -184,6 +184,63 @@ test('invalid collection and Scene errors are reported instead of showing an emp
 test('single selection never silently reduces a multiple host selection to its first node',()=>{const one=node('Duvet','Visible'),two=node('Hat','Hat');assert.equal(support.iconSelection({getSelectedNodeList:()=>({0:one,1:two,length:2})}).ok,false);const selected=support.iconSelection({getNumSelectedNodes:()=>1,getSelectedNode:()=>one});assert(selected.ok);assert.equal(selected.node,one);assert.equal(support.iconSelection({getSelectedNodeList:()=>[]}).ok,false);});
 test('fitted/parented props remain eligible icon targets; main-owner rules are not used',()=>{const prop={...node('Hat','Hat'),inherits:type=>type==='DzNode',getNodeParent:()=>({}),getFollowTarget:()=>({})};assert(support.isIconNode(prop));assert.equal(support.isIconNode({...prop,inherits:type=>['DzNode','DzBone'].includes(type)}),false);});
 test('case-equivalent exact matches keep deterministic earlier-row priority',()=>{const rows=[rule('exactLabel','Duvet','one.png'),rule('exactLabel','DUVET','two.png')];assert.equal(support.matchIcon(rows,node('Other','duvet (1)')).icon,'one.png');});
+
+function enabledRule(kind,pattern,enabled,icon='chosen.png'){return {...rule(kind,pattern,icon),enabled};}
+function enabledNode(){const n=node('Earring04_L','Earring04_L (2)');n.assetUri={filePath:'/data/Vendor/Product/Earring04_L/Name.dsf'};n.assetAuthor={toString:()=> 'Creator'};n.assetId='DifferentRaw';return n;}
+const enabledPatterns={exactName:'Earring04_L',exactLabel:'Earring04_L',exactAssetId:'Earring04_L',nameWord:'Earring04',labelWord:'Earring04',assetIdWord:'Earring04',namePrefix:'Earring',labelPrefix:'Earring'};
+for(const kind of Object.keys(enabledPatterns))test(kind+': false disables only this rule; true and absence retain matching',()=>{
+  const n=enabledNode(),disabled=enabledRule(kind,enabledPatterns[kind],false),before=plain(disabled);
+  assert.deepStrictEqual(plain(support.matchIcon([disabled],n)),none);assert.deepStrictEqual(disabled,before);
+  assert.equal(support.matchIcon([enabledRule(kind,enabledPatterns[kind],true)],n).matched,true);assert.equal(support.matchIcon([rule(kind,enabledPatterns[kind])],n).matched,true);
+});
+test('disabled exact rules never block a matching word or retained legacy prefix',()=>{
+  const n=enabledNode();
+  for(const exact of ['exactName','exactLabel','exactAssetId'])for(const fallback of ['nameWord','labelWord','assetIdWord','namePrefix','labelPrefix']){
+    const rows=[enabledRule(exact,enabledPatterns[exact],false,'blocked.png'),rule(fallback,enabledPatterns[fallback],'active.png')],matched=support.matchIcon(rows,n);
+    assert.equal(matched.icon,'active.png',exact+' -> '+fallback);assert.equal(matched.ruleIndex,1);assert.equal(matched.kind,fallback);
+  }
+});
+test('disabled longest and higher-field-priority words allow the remaining word rule',()=>{
+  const n=node('Coat','Long Coat');
+  assert.equal(support.matchIcon([enabledRule('labelWord','Long Coat',false,'disabled.png'),rule('nameWord','Coat','active.png')],n).icon,'active.png');
+  assert.equal(support.matchIcon([enabledRule('labelWord','Coat',false,'disabled.png'),rule('nameWord','Coat','active.png')],n).kind,'nameWord');
+});
+test('disabled earlier rows preserve original indices and active final-tie order',()=>{
+  const rows=[enabledRule('labelWord','Hair',false,'disabled.png'),enabledRule('labelWord','hair',true,'first-active.png'),rule('labelWord','HAIR','later.png')],matched=support.matchIcon(rows,node('Other','Hair'));
+  assert.equal(matched.ruleIndex,1);assert.equal(matched.icon,'first-active.png');assert.equal(rows[0].enabled,false);assert.equal(rows[1].enabled,true);assert.equal(Object.prototype.hasOwnProperty.call(rows[2],'enabled'),false);
+});
+test('all disabled rules produce unmatched previews without changing stored enabled fields',()=>{
+  const rows=Object.keys(enabledPatterns).map(kind=>enabledRule(kind,enabledPatterns[kind],false)),before=plain(rows),n=enabledNode(),preview=support.previewIconRules(rows,[n],1);
+  assert.equal(preview.matched,0);assert.deepStrictEqual(plain(preview.rows[0].match),none);assert.deepStrictEqual(rows,before);
+});
+test('explicit enable toggle updates matcher and preview together without rewriting rule contents',()=>{
+  const rows=[enabledRule('exactName','Earring04_L',false),rule('labelWord','Earring04','fallback.png')],n=enabledNode();
+  assert.equal(support.previewIconRules(rows,[n],1).rows[0].match.icon,'fallback.png');rows[0].enabled=true;
+  assert.equal(support.matchIcon(rows,n).icon,'chosen.png');assert.equal(support.previewIconRules(rows,[n],1).rows[0].match.icon,'chosen.png');assert.equal(rows[0].pattern,'Earring04_L');assert.equal(rows[1].icon,'fallback.png');
+});
+test('disabled rules are skipped before examining their pattern or calculating priority',()=>{
+  const disabled={enabled:false};Object.defineProperty(disabled,'pattern',{get(){throw Error('Disabled pattern evaluated');}});
+  assert.equal(support.matchIcon([disabled,rule('exactName','Hair')],node('Hair','Other')).ruleIndex,1);
+});
+for(const throwing of [false,true])test('inherited '+(throwing?'throwing':'false')+' enabled metadata does not disable missing-own-flag rules',()=>{
+  const proto={};if(throwing)Object.defineProperty(proto,'enabled',{get(){throw Error('Inherited flag evaluated');}});else proto.enabled=false;
+  const row=Object.assign(Object.create(proto),rule('exactName','Hair'));assert.equal(support.matchIcon([row],node('Hair','Other')).matched,true);assert.equal(Object.prototype.hasOwnProperty.call(row,'enabled'),false);
+});
+for(const file of ['Wearables Manager Full.dsa','Wearables Manager Menu.dsa']){
+  const source=fs.readFileSync(path.join(root,file),'utf8');
+  test(file+': disabled custom rule restores the actual automatic icon; enabling the same row restores its PNG',()=>{
+    const rows=[enabledRule('exactLabel','Hair',false,'custom.png')],a=iconsClass(source,rows,['custom.png']),n=node('Camera','Hair (1)');
+    assert.equal(a.icons.GetIconForWearable(n).path,'/Resources/Wearables Manager - Camera.PNG');rows[0].enabled=true;
+    assert.equal(a.icons.GetIconForWearable(n).path,'/Resources/custom.png');assert.equal(a.writes.length,0);assert(a.dirs.every(d=>d.deleted));
+  });
+  test(file+': shared effective resolver and Menu preview use the active fallback after a disabled exact row',()=>{
+    const rows=[enabledRule('exactName','Camera',false,'blocked.png'),enabledRule('labelWord','Hair',true,'custom.png')],before=plain(rows),a=iconsClass(source,rows,['custom.png','blocked.png']),n=node('Camera','Hair (1)');
+    n.elementID='enabled-preview';n.inherits=kind=>kind==='DzNode';n.getNodeParent=()=>null;n.getNodeChildren=()=>[];n.findDataItem=()=>null;
+    const resolver=a.support.createIconResolver('/Resources',()=>rows),resolved=resolver.resolve(n,rows);assert.equal(resolved.source,'custom');assert.equal(resolved.icon,'custom.png');assert.equal(resolved.rule.ruleIndex,1);
+    const cfg=a.support.defaults();cfg.iconRules=rows;const scene={getNodeList:()=>[n],getSelectedNodeList:()=>[n],getPrimarySelection:()=>n},preview=a.support.previewMenu(scene,cfg,resolver,false);
+    assert(preview.ok,preview.message);assert.equal(preview.rows[0].source,resolved.source);assert.equal(preview.rows[0].icon,resolved.icon);assert.deepStrictEqual(rows,before);assert.equal(a.writes.length,0);assert(a.dirs.every(d=>d.deleted));
+  });
+}
 
 const result={status:integrated?'Actual integrated source':'Pure methods and UNAPPLIED actual-source integration overlay',nativeExecuted:false,productSourcesWritten:false,sourceRoot:root,supportSource:supportPath||'wm2-icon-methods.body.js',sourceInventory,cases,passed:cases.length};
 fs.writeFileSync(path.join(root,'.test-output/features-icons.json'),JSON.stringify(result,null,2)+'\n');

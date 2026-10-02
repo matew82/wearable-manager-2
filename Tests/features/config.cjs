@@ -206,6 +206,62 @@ for(const kind of ['exactName','exactLabel','nameWord','labelWord','namePrefix',
 test('mixed-case icon patterns serialize/reload without losing spelling or runtime matches',()=>{const c=valid();c.iconRules=[{kind:'labelWord',pattern:'DuVeT',icon:'A.png'}];const f=fixture(),r=f.support.load(RESOURCE);assert(f.support.save(RESOURCE,c,r.rawToken).ok);const loaded=f.support.load(RESOURCE);assert.equal(loaded.config.iconRules[0].pattern,'DuVeT');assert.equal(f.support.matchIcon(loaded.config.iconRules,{name:'Other',label:'dForce DUVET'}).icon,'A.png');});
 test('existing case-variant config loads and resaves all rows without repair/default replacement',()=>{const c=valid();c.iconRules=[{kind:'labelWord',pattern:'DuVeT',icon:'A.png'},{kind:'labelWord',pattern:'duvet',icon:'B.png'}];const raw=JSON.stringify(c),f=fixture(raw),r=f.support.load(RESOURCE);assert.equal(r.status,'ok');assert(r.message.includes('differ only by case'));assert.deepStrictEqual(json(r.config),c);noMutation(f);c.supportedFigures.push('Custom');assert(f.support.save(RESOURCE,c,r.rawToken).ok);assert.deepStrictEqual(json(f.support.load(RESOURCE).config),c);assert.equal(f.support.matchIcon(c.iconRules,{label:'DUVET'}).icon,'A.png');});
 
+for(const enabled of [false,true])test('optional rule enabled '+enabled+' is preserved by validation and independent deep clones',()=>{
+  const f=fixture(),c=edited();c.iconRules[0].enabled=enabled;const checked=f.support.validate(c);
+  assert(checked.ok,checked.message);assert.deepStrictEqual(json(checked.config),c);assert.equal(checked.config.iconRules[0].enabled,enabled);
+  const copy=f.support.clone(checked.config);copy.iconRules[0].enabled=!enabled;assert.equal(c.iconRules[0].enabled,enabled);assert.equal(checked.config.iconRules[0].enabled,enabled);noMutation(f);
+});
+test('missing enabled stays absent through validate clone and read-only load',()=>{
+  const c=edited(),raw=JSON.stringify(c),f=fixture(raw),checked=f.support.validate(c),loaded=f.support.load(RESOURCE);
+  assert(checked.ok);for(const value of [checked.config,f.support.clone(c),loaded.config]){assert.equal(Object.prototype.hasOwnProperty.call(value.iconRules[0],'enabled'),false);assert.deepStrictEqual(json(value),c);}
+  assert.equal(f.support.matchIcon(loaded.config.iconRules,{label:'Hair'}).matched,true);oldIntact(f,raw);noMutation(f);
+});
+test('enabled rejects nonboolean own values before any save filesystem access',()=>{
+  for(const enabled of [null,undefined,0,1,'true','false',[],{},new Boolean(false),()=>false]){
+    const f=fixture(),c=edited();c.iconRules[0].enabled=enabled;const checked=f.support.validate(c);
+    assert.equal(checked.ok,false,String(enabled));assert(checked.message.includes('enabled'));assert.equal(f.support.save(RESOURCE,c,'token').ok,false);assert.deepStrictEqual(f.events,[]);
+  }
+});
+test('optional enabled does not relax required rule fields or known own keys',()=>{
+  for(const key of ['kind','pattern','icon']){const c=edited();c.iconRules[0].enabled=false;delete c.iconRules[0][key];assert.equal(fixture().support.validate(c).ok,false,key);}
+  const c=edited();c.iconRules[0].enabled=false;c.iconRules[0].other=true;assert.equal(fixture().support.validate(c).ok,false);
+});
+test('disabled duplicate literal rules remain invalid without changing duplicate policy',()=>{
+  for(const enabled of [false,true]){const c=edited();c.iconRules[0].enabled=false;c.iconRules.push({...c.iconRules[0],icon:'Other.png',enabled});assert.equal(fixture().support.validate(c).ok,false);}
+});
+test('disabled case variants retain all rows spelling and validation notice',()=>{
+  const c=valid();c.iconRules=[{kind:'labelWord',pattern:'DuVeT',icon:'A.png',enabled:false},{kind:'labelWord',pattern:'duvet',icon:'B.png',enabled:true}];
+  const checked=fixture().support.validate(c);assert(checked.ok);assert(checked.message.includes('differ only by case'));assert.deepStrictEqual(json(checked.config),c);
+});
+test('schema1 migration retains enabled flags without automatically rewriting legacy bytes',()=>{
+  const legacy={schema:1,supportedFigures:['Custom'],iconRules:[{kind:'namePrefix',pattern:'Hair',icon:'A.png',enabled:false},{kind:'labelWord',pattern:'Hair',icon:'B.png',enabled:true},{kind:'exactName',pattern:'Other',icon:'C.png'}]},raw='  '+JSON.stringify(legacy)+'\n',f=fixture(raw),loaded=f.support.load(RESOURCE);
+  assert.equal(loaded.status,'ok');assert.equal(loaded.config.schema,2);assert.deepStrictEqual(json(loaded.config.iconRules),legacy.iconRules);oldIntact(f,raw);noMutation(f);
+  assert(f.support.save(RESOURCE,loaded.config,loaded.rawToken).ok);assert.deepStrictEqual(json(f.support.load(RESOURCE).config.iconRules),legacy.iconRules);assert.equal(f.files.get(LEGACY).raw,f.legacy);
+});
+test('all exact word and legacy kinds roundtrip enabled true false and absence without losing order',()=>{
+  const c=valid(),kinds=['exactName','exactLabel','exactAssetId','nameWord','labelWord','assetIdWord','namePrefix','labelPrefix'];
+  c.iconRules=kinds.map((kind,index)=>{const value={kind,pattern:'Hair',icon:'A.png'};if(index%3!==2)value.enabled=index%3===1;return value;});
+  const f=fixture(),loaded=f.support.load(RESOURCE);assert(f.support.save(RESOURCE,c,loaded.rawToken).ok);assert.deepStrictEqual(json(f.support.load(RESOURCE).config),c);assert.deepStrictEqual(JSON.parse(f.files.get(TARGET).raw),c);assert.equal(f.files.get(LEGACY).raw,f.legacy);
+});
+test('loading enabled flags performs no preference writes and canonical resave performs no writes',()=>{
+  const f=fixture(),c=edited();c.iconRules[0].enabled=false;assert(f.support.save(RESOURCE,c,f.support.load(RESOURCE).rawToken).ok);f.events.length=0;
+  const loaded=f.support.load(RESOURCE);assert.equal(loaded.config.iconRules[0].enabled,false);noMutation(f);assert(f.support.save(RESOURCE,loaded.config,loaded.rawToken).ok);noMutation(f);
+});
+test('explicit toggling saves only the enabled flag and retains other settings',()=>{
+  const c=edited();c.iconRules[0].enabled=false;const f=fixture(JSON.stringify(c)),loaded=f.support.load(RESOURCE);loaded.config.iconRules[0].enabled=true;assert(f.support.save(RESOURCE,loaded.config,loaded.rawToken).ok);
+  const expected=json(c);expected.iconRules[0].enabled=true;assert.deepStrictEqual(json(f.support.load(RESOURCE).config),expected);assert.equal(c.iconRules[0].enabled,false);assert.equal(f.files.get(LEGACY).raw,f.legacy);
+});
+test('partial toggle write keeps the original disabled settings and legacy bytes',()=>{
+  const c=edited();c.iconRules[0].enabled=false;const raw=JSON.stringify(c),f=fixture(raw,{write:({files,path,args})=>{files.set(path,{type:'file',raw:args[0].slice(0,10)});return{handled:true,value:10};}}),loaded=f.support.load(RESOURCE);loaded.config.iconRules[0].enabled=true;
+  assert.equal(f.support.save(RESOURCE,loaded.config,loaded.rawToken).ok,false);oldIntact(f,raw);assert.deepStrictEqual(extras(f),[]);
+});
+for(const throwing of [false,true])test('inherited '+(throwing?'throwing ':'false ')+'enabled is ignored as host metadata',()=>{
+  const c=edited(),proto={};if(throwing)Object.defineProperty(proto,'enabled',{enumerable:true,get(){throw Error('Inherited enabled read');}});else proto.enabled=false;
+  c.iconRules[0]=Object.assign(Object.create(proto),c.iconRules[0]);const f=fixture(),checked=f.support.validate(c);
+  assert(checked.ok,checked.message);assert.equal(Object.prototype.hasOwnProperty.call(checked.config.iconRules[0],'enabled'),false);assert.equal(Object.prototype.hasOwnProperty.call(f.support.clone(c).iconRules[0],'enabled'),false);
+  assert.equal(f.support.matchIcon(c.iconRules,{label:'Hair'}).matched,true);noMutation(f);
+});
+
 const receipt={modulePath,sourceSHA256:crypto.createHash('sha256').update(source).digest('hex'),generatedAt:new Date().toISOString(),scope:'Actual shared module in Node; isolated mocked DzFile/DzFileInfo only. No native DAZ or product/config writes.',total:tests.length,passed:tests.filter(t=>t.pass).length,failed:tests.filter(t=>!t.pass).length,tests};
 fs.writeFileSync(receiptPath,JSON.stringify(receipt,null,2)+'\n');
 console.log(JSON.stringify({total:receipt.total,passed:receipt.passed,failed:receipt.failed,receiptPath,sourceSHA256:receipt.sourceSHA256}));

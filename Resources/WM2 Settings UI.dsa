@@ -53,21 +53,15 @@ function WM2SettingsHeading(parent, text, color) {
     WM2SettingsCSS(label, "QLabel { color:" + safeColor + "; }");
     return label;
 }
-function WM2SettingsButton(parent, text, resourcePath, iconFilename, rotateClockwise) {
-    var button = new DzPushButton(parent), metrics = WM2SettingsMetrics(button);
-    button.text = String(text); button.font = WM2SettingsFont(button, false); button.minHeight = metrics.buttonHeight;
-    var textWidth = String(text).length * 7;
-    try { if (typeof button.font.size == "function") textWidth = Number(button.font.size(String(text)).width); } catch (e) {}
-    if (!isFinite(textWidth)) textWidth = String(text).length * 7;
-    button.minWidth = Math.max(80, Math.ceil(textWidth) + metrics.iconSize + 30);
-    var loaded = false, image = null, scaledImage = null, rotatedImage = null;
+function WM2SettingsLoadPixmap(resourcePath, iconFilename, iconSize, rotateClockwise) {
+    var image = null, scaledImage = null, rotatedImage = null;
     try {
         if (typeof resourcePath == "string" && resourcePath && typeof iconFilename == "string" && /^[^\\/:\x00-\x1f]+\.png$/i.test(iconFilename)) {
             var pixmap = new Pixmap(resourcePath.replace(/[\\/]+$/, "") + "/" + iconFilename);
             if (pixmap && !pixmap.isNull()) {
                 // Scale the native pixmap for DAZ4; Qt6 also needs an explicit iconSize.
                 image = pixmap.toImage();
-                var width = Number(pixmap.width), height = Number(pixmap.height), factor = metrics.iconSize / Math.max(width, height);
+                var width = Number(pixmap.width), height = Number(pixmap.height), factor = iconSize / Math.max(width, height);
                 if (width > 0 && height > 0 && typeof image.smoothScale == "function") {
                     var scaled = new Pixmap();
                     scaledImage=image.smoothScale(Math.max(1,Math.round(width*factor)),Math.max(1,Math.round(height*factor)));
@@ -76,17 +70,28 @@ function WM2SettingsButton(parent, text, resourcePath, iconFilename, rotateClock
                 }
                 if(rotateClockwise) {
                     var pixels=scaledImage || image,w=Number(pixels.width),h=Number(pixels.height);
-                    if(w<=0 || h<=0 || w>metrics.iconSize || h>metrics.iconSize || typeof pixels.pixel!=="function" || typeof Image==="undefined" || typeof Image.Format_ARGB32==="undefined")throw new Error("Arrow rotation is unavailable.");
+                    if(w<=0 || h<=0 || w>iconSize || h>iconSize || typeof pixels.pixel!=="function" || typeof Image==="undefined" || typeof Image.Format_ARGB32==="undefined")throw new Error("Arrow rotation is unavailable.");
                     rotatedImage=new Image(h,w,Image.Format_ARGB32);
                     for(var y=0;y<h;y++)for(var x=0;x<w;x++)rotatedImage.setPixel(h-1-y,x,pixels.pixel(x,y));
                     var vertical=new Pixmap();vertical.fromImage(rotatedImage);if(vertical.isNull())throw new Error("Arrow rotation failed.");pixmap=vertical;
                 }
-                button.pixmap = pixmap; loaded = true;
-                try { button.getWidget().iconSize = new Size(metrics.iconSize,metrics.iconSize); } catch (e) {}
+                return pixmap;
             }
         }
-    } catch (e) { loaded = false; }
+    } catch (e) {}
     finally { try { if(rotatedImage && typeof rotatedImage.deleteLater==="function")rotatedImage.deleteLater(); }catch(e){} try { if (scaledImage && typeof scaledImage.deleteLater == "function") scaledImage.deleteLater(); } catch (e) {} try { if (image && typeof image.deleteLater == "function") image.deleteLater(); } catch (e) {} }
+    return null;
+}
+function WM2SettingsButton(parent, text, resourcePath, iconFilename, rotateClockwise, iconSize) {
+    var button = new DzPushButton(parent), metrics = WM2SettingsMetrics(button);
+    if(iconSize===32){metrics.iconSize=32;metrics.buttonHeight=Math.max(metrics.buttonHeight,44);}
+    button.text = String(text); button.font = WM2SettingsFont(button, false); button.minHeight = metrics.buttonHeight;
+    var textWidth = String(text).length * 7;
+    try { if (typeof button.font.size == "function") textWidth = Number(button.font.size(String(text)).width); } catch (e) {}
+    if (!isFinite(textWidth)) textWidth = String(text).length * 7;
+    button.minWidth = Math.max(80, Math.ceil(textWidth) + metrics.iconSize + 30);
+    var pixmap=WM2SettingsLoadPixmap(resourcePath,iconFilename,metrics.iconSize,rotateClockwise),loaded=pixmap!==null;
+    if(loaded){button.pixmap=pixmap;try{button.getWidget().iconSize=new Size(metrics.iconSize,metrics.iconSize);}catch(e){}}
     // Keep the icon slot in the text fallback as well as the button's minimum width.
     WM2SettingsCSS(button, "QPushButton { padding:5px 8px;" + (loaded ? "" : " padding-left:32px;") + " }");
     return button;
@@ -116,7 +121,7 @@ function WM2SettingsRow(parent, layout) {
     rowLayout.margin = 0; rowLayout.spacing = WM2SettingsMetrics(row).spacing;
     layout.addWidget(row); return {widget:row,layout:rowLayout};
 }
-function WM2SettingsEditorRows(parent, layout, resourcePath, emptyText, onSelect) {
+function WM2SettingsEditorRows(parent, layout, resourcePath, emptyText, onSelect, options) {
     var scroll=new DzScrollArea(parent),metrics=WM2SettingsMetrics(scroll);
     scroll.widgetResizable=true;scroll.minHeight=Math.max(180,metrics.listHeight);layout.addWidget(scroll,1);
     var editor={scroll:scroll,entries:[],rows:[],currentItem:-1};scroll.wm2EditorRows=editor;
@@ -143,18 +148,27 @@ function WM2SettingsEditorRows(parent, layout, resourcePath, emptyText, onSelect
         for(var i=0;i<editor.entries.length;i++) {
             var entry=editor.entries[i],row=WM2SettingsRow(body,bodyLayout);row.layout.margin=8;
             try{row.widget.getWidget().objectName="WM2EditorRow"+i;}catch(e){}
+            var checkBox=null;
+            if(options&&options.checkEnabled){
+                checkBox=new DzCheckBox(row.widget);checkBox.text="";checkBox.tristate=false;checkBox.checked=entry.enabled!==false;
+                checkBox.enabled=options.editable!==false;checkBox.toolTip="Enable rule";checkBox.wm2RuleIndex=i;row.layout.addWidget(checkBox);
+            }
             var button=WM2SettingsButton(row.widget,">",resourcePath,"Wearables Manager - Arrow Right.png");
+            try{button.getWidget().autoDefault=false;}catch(e){}
             try{if(button.pixmap&&!button.pixmap.isNull())button.text="";}catch(e){}button.minWidth=34;button.toolTip="Select "+entry.name;
             button.wm2RowName=entry.name;button.wm2RowIndex=i;row.layout.addWidget(button);
             var textColumn=new DzWidget(row.widget),textLayout=new DzVBoxLayout(textColumn);textLayout.margin=0;textLayout.spacing=2;
             var label=WM2SettingsPlainLabel(textColumn,entry.text);label.font=WM2SettingsFont(label,true);textLayout.addWidget(label);
             var detailLabel=null;if(entry.detail){detailLabel=WM2SettingsPlainLabel(textColumn,entry.detail);textLayout.addWidget(detailLabel);}
             row.layout.addWidget(textColumn,1);
-            editor.rows.push({widget:row.widget,button:button,label:label,detailLabel:detailLabel,selected:false});
+            editor.rows.push({widget:row.widget,button:button,label:label,detailLabel:detailLabel,checkBox:checkBox,selected:false});
             (function(index,name,selector){connect(selector,"clicked()",function(){
                 // A queued click from content replaced after Add/Remove cannot select a different row.
                 if(editor.rows[index]&&editor.rows[index].button===selector&&editor.entries[index].name===name)editor.select(index,true);
             });})(i,entry.name,button);
+            if(checkBox)(function(index,name,control){connect(control,"toggled(bool)",function(enabled){
+                if(editor.rows[index]&&editor.rows[index].checkBox===control&&editor.entries[index].name===name&&typeof options.onEnabled==="function")options.onEnabled(index,enabled===true);
+            });})(i,entry.name,checkBox);
         }
         if(!editor.entries.length)bodyLayout.addWidget(WM2SettingsPlainLabel(body,emptyText));
         if(typeof bodyLayout.addStretch==="function")bodyLayout.addStretch(1);
@@ -183,6 +197,7 @@ function WM2SettingsValidate(support, config) {
     return result && result.ok === true ? {ok:true,config:result.config || config} : {ok:false,message:result && result.message ? String(result.message) : "Settings did not pass validation."};
 }
 function WM2SettingsIsLegacyKind(kind) { return kind == "namePrefix" || kind == "labelPrefix"; }
+function WM2SettingsRuleEnabled(rule) { return !(Object.prototype.hasOwnProperty.call(rule,"enabled")&&rule.enabled===false); }
 function WM2SettingsKindLabel(kind) {
     if(kind == "exactName")return "Exact name";
     if(kind == "exactLabel")return "Exact label";
@@ -194,6 +209,35 @@ function WM2SettingsKindLabel(kind) {
     if(kind == "labelPrefix")return "Legacy: label prefix";
     return String(kind);
 }
+function WM2SettingsModePicker(parent, layout, resourcePath, changed) {
+    var row=WM2SettingsRow(parent,layout),kinds=["exactName","exactLabel","nameWord","labelWord","exactAssetId","assetIdWord"],names=["Exact Name","Exact Label","Word Name","Word Label","Exact AssetId","Word AssetId"],fallback=["=N","=L","wN","wL","=A","wA"];
+    var picker={currentItem:0,buttons:[],kinds:kinds,enabled:true};row.widget.wm2ModePicker=picker;
+    for(var i=0;i<kinds.length;i++) {
+        var filename="Wearables Manager - Match "+names[i]+".png",onFilename="Wearables Manager - Match "+names[i]+" On.png";
+        var button=WM2SettingsButton(row.widget,fallback[i],resourcePath,filename,false,32);
+        button.wm2ModeNormalFilename=filename;button.wm2ModeOnFilename=onFilename;button.wm2ModeFallback=fallback[i];
+        button.wm2ModeNormalPixmap=null;try{if(button.pixmap&&!button.pixmap.isNull())button.wm2ModeNormalPixmap=button.pixmap;}catch(e){}
+        button.wm2ModeOnPixmap=WM2SettingsLoadPixmap(resourcePath,onFilename,32,false);
+        try{button.getWidget().iconSize=new Size(32,32);}catch(e){}
+        try{if(button.pixmap&&!button.pixmap.isNull())button.text="";}catch(e){}
+        button.minWidth=44;button.minHeight=44;button.maxWidth=44;button.maxHeight=44;if(typeof button.setCheckable==="function")button.setCheckable(true);else try{button.getWidget().checkable=true;}catch(e){}try{button.getWidget().autoDefault=false;}catch(e){}button.wm2ModeKind=kinds[i];button.toolTip=WM2SettingsKindLabel(kinds[i]);row.layout.addWidget(button);picker.buttons.push(button);
+        (function(index,control){connect(control,"clicked()",function(){if(picker.enabled&&control.enabled){picker.select(index,true);try{control.getWidget().setFocus();}catch(e){}}});})(i,button);
+    }
+    var label=WM2SettingsPlainLabel(row.widget,"");label.font=WM2SettingsFont(label,true);row.layout.addWidget(label,1);picker.label=label;
+    picker.select=function(index,notify,legacyKind){
+        index=Number(index);picker.currentItem=index>=0&&index<kinds.length&&Math.floor(index)===index?index:-1;
+        for(var i=0;i<picker.buttons.length;i++){
+            var control=picker.buttons[i],selected=i===picker.currentItem,pixmap=selected?(control.wm2ModeOnPixmap||control.wm2ModeNormalPixmap):control.wm2ModeNormalPixmap;
+            control.checked=selected;try{control.pixmap=pixmap||new Pixmap();}catch(e){}control.text=pixmap?"":control.wm2ModeFallback;
+            control.wm2ModeIconFilename=pixmap?(selected&&control.wm2ModeOnPixmap?control.wm2ModeOnFilename:control.wm2ModeNormalFilename):null;
+            WM2SettingsCSS(control,"QPushButton { padding:5px; border:1px solid "+(selected?"#87c9ff":"#777777")+"; border-radius:4px;"+(selected?" background:#293c49;":"")+" }");
+        }
+        WM2SettingsSetPlainText(label,picker.currentItem>=0?WM2SettingsKindLabel(kinds[picker.currentItem]):WM2SettingsKindLabel(legacyKind||""));
+        if(notify===true&&typeof changed==="function")changed();
+    };
+    picker.setEnabled=function(enabled){picker.enabled=enabled===true;for(var i=0;i<picker.buttons.length;i++)picker.buttons[i].enabled=picker.enabled;};
+    picker.select(0,false);return picker;
+}
 function WM2SettingsModel(support, resourcePath, firstIcon) {
     var loaded;
     try { loaded = support.load(resourcePath); }
@@ -204,6 +248,13 @@ function WM2SettingsModel(support, resourcePath, firstIcon) {
     model.clear = function () { model.active=-1;model.form={kind:"exactName",pattern:"",icon:firstIcon || ""};model.baseline=JSON.stringify(model.form); };
     model.dirty = function () { return JSON.stringify(model.form)!==model.baseline; };
     model.setForm = function (form) { model.form={kind:String(form.kind),pattern:String(form.pattern),icon:String(form.icon)}; };
+    model.ruleFromForm=function(index){var rule=support.clone(model.form),existing=model.config.iconRules[index];if(existing&&Object.prototype.hasOwnProperty.call(existing,"enabled"))rule.enabled=existing.enabled;return rule;};
+    model.setEnabled=function(index,enabled){
+        if(!model.editable)return response(false,"These settings are read-only.");
+        if(typeof enabled!=="boolean"||index<0||index>=model.config.iconRules.length||Math.floor(index)!==index)return response(false,"Select a rule to enable or disable.");
+        var next=support.clone(model.config);next.iconRules[index].enabled=enabled;
+        var checked=WM2SettingsValidate(support,next);if(!checked.ok)return checked;model.config=support.clone(checked.config);return response(true);
+    };
     model.commit = function (asNew) {
         if (!model.editable) return response(false,"These settings are read-only: "+model.message);
         if (WM2SettingsIsLegacyKind(model.form.kind) || (!asNew && model.active>=0 && WM2SettingsIsLegacyKind(model.config.iconRules[model.active].kind))) return response(false,"Legacy prefix rules are preserved read-only. Use Clear Draft to create an exact or word rule.");
@@ -216,7 +267,7 @@ function WM2SettingsModel(support, resourcePath, firstIcon) {
             var other=next.iconRules[existing];
             if(existing!==index && other.kind===model.form.kind && other.pattern.toLowerCase()===model.form.pattern.toLowerCase())return response(false,"A rule of this kind and pattern already exists (ignoring case). Update that row instead.");
         }
-        next.iconRules[index]=support.clone(model.form);
+        next.iconRules[index]=model.ruleFromForm(index);
         var checked=WM2SettingsValidate(support,next);if(!checked.ok)return checked;
         model.config=support.clone(checked.config);model.active=index;model.baseline=JSON.stringify(model.form);return {ok:true,index:index};
     };
@@ -227,7 +278,7 @@ function WM2SettingsModel(support, resourcePath, firstIcon) {
     model.select = function (index) {
         if (model.dirty()) { var committed=model.commit(false);if(!committed.ok)return committed; }
         if(index<0||index>=model.config.iconRules.length){model.clear();return response(true);}
-        model.active=index;model.form=support.clone(model.config.iconRules[index]);model.baseline=JSON.stringify(model.form);return response(true);
+        model.active=index;model.setForm(model.config.iconRules[index]);model.baseline=JSON.stringify(model.form);return response(true);
     };
     model.remove = function () {
         if(!model.editable)return response(false,"These settings are read-only.");
@@ -301,10 +352,10 @@ function WM2ShowIconRules(resourcePath,getPreviewContext) {
     try { icons=WM2SettingsIcons(resourcePath); } catch(e) { iconError="Icon listing failed: "+String(e); }
     var model=WM2SettingsModel(support,resourcePath,icons.length?icons[0]:""),ui=WM2SettingsDialog("Icon rules for no active item",resourcePath),dialog=ui.dialog,content=ui.content,layout=ui.layout,metrics=ui.metrics;
     var heading=WM2SettingsHeading(content,"Icon rules for no active item","#87c9ff");layout.addWidget(heading);
-    layout.addWidget(WM2SettingsPlainLabel(content,"Clear Draft resets the form. Add Rule adds a new draft row; Update Rule replaces the selected row. Save writes settings and commits a changed valid form. Matching ignores case and uses literal text. Word edges for all fields, including assetId, are start/end, whitespace, digits 0-9, hyphen/dash, underscore or !; /, #, :, . and % are not word edges. Exact name, exact label and exact assetId precede longer word rules, then legacy prefixes; label, name, assetId and earlier row break word ties. Only exact labels ignore a final ' (digits)' copy suffix."));
-    var status=WM2SettingsPlainLabel(content,""),list=new DzListBox(content);list.selectionMode=DzListBox.Single;list.minHeight=metrics.listHeight;layout.addWidget(list,1);
-    var kindRow=WM2SettingsRow(content,layout),kind=new DzComboBox(kindRow.widget),kinds=["exactName","exactLabel","nameWord","labelWord","exactAssetId","assetIdWord"];
-    kindRow.layout.addWidget(WM2SettingsPlainLabel(kindRow.widget,"Match"));for(var i=0;i<kinds.length;i++)kind.addItem(WM2SettingsKindLabel(kinds[i]));kind.minHeight=metrics.fieldHeight;kindRow.layout.addWidget(kind,1);
+    var boundaries=WM2SettingsPlainLabel(content,"Words match literal text, ignoring case. Boundaries are start/end, whitespace, digits, dashes, _ or ! outside the entire pattern.");boundaries.font=WM2SettingsFont(boundaries,true);layout.addWidget(boundaries);
+    var status=WM2SettingsPlainLabel(content,""),list=WM2SettingsEditorRows(content,layout,resourcePath,"No icon rules.",selectRule,{checkEnabled:true,editable:model.editable,onEnabled:toggleRuleEnabled});
+    list.scroll.wm2IconRules=true;
+    var kind=WM2SettingsModePicker(content,layout,resourcePath,edited),kinds=kind.kinds;
     var patternRow=WM2SettingsRow(content,layout),pattern=new DzLineEdit(patternRow.widget);pattern.minHeight=metrics.fieldHeight;patternRow.layout.addWidget(WM2SettingsPlainLabel(patternRow.widget,"Pattern"));patternRow.layout.addWidget(pattern,1);
     var iconRow=WM2SettingsRow(content,layout),icon=new DzComboBox(iconRow.widget),iconValues=icons.slice(0),browse=WM2SettingsButton(iconRow.widget,"Browse PNG",resourcePath,"Wearables Manager - Prop.png");icon.minHeight=metrics.fieldHeight;iconRow.layout.addWidget(WM2SettingsPlainLabel(iconRow.widget,"Icon"));iconRow.layout.addWidget(icon,1);iconRow.layout.addWidget(browse);
     for(var j=0;j<icons.length;j++)icon.addItem(icons[j]);
@@ -314,7 +365,6 @@ function WM2ShowIconRules(resourcePath,getPreviewContext) {
     var useName=WM2SettingsButton(selectionActions.widget,"Use Selected Name",resourcePath,"Wearables Manager - Prop.png"),useLabel=WM2SettingsButton(selectionActions.widget,"Use Selected Label",resourcePath,"Wearables Manager - Prop.png"),useAssetId=WM2SettingsButton(selectionActions.widget,"Use Selected AssetId",resourcePath,"Wearables Manager - Prop.png");selectionActions.layout.addWidget(useName);selectionActions.layout.addWidget(useLabel);selectionActions.layout.addWidget(useAssetId);
     var assetValue=WM2SettingsPlainLabel(content,"");layout.addWidget(assetValue);
     var up=WM2SettingsButton(moving.widget,"Move Up",resourcePath,"Wearables Manager - Arrow Left.png",true),down=WM2SettingsButton(moving.widget,"Move Down",resourcePath,"Wearables Manager - Arrow Right.png",true),previewButton=WM2SettingsButton(moving.widget,"Preview Scene",resourcePath,"Wearables Manager - Group.png");moving.layout.addWidget(up);moving.layout.addWidget(down);moving.layout.addWidget(previewButton);
-    layout.addWidget(WM2SettingsPlainLabel(content,"Preview Scene shows the active item's figure and its Menu items. Click a picture to edit that item; Back to Figure returns to its resolved owner. Menu's item-key by author caption supplies the assetId key; author text is separate. These actions do not change Scene selection or move wearables. A changed valid form is kept in the draft list before switching; an invalid form blocks switching until corrected or Clear Draft. Save writes all draft changes; Cancel discards them. Legacy prefix forms are read-only; use Clear Draft for a new rule."));
     var preview=new DzScrollArea(content);preview.widgetResizable=true;preview.minHeight=Math.max(180,metrics.previewHeight);layout.addWidget(preview,1);layout.addWidget(status);
     var previewWholeFigure=false,editingTarget=null,iconResolver=support.createIconResolver(resourcePath,function(){return model.config.iconRules;});
     function say(text){WM2SettingsSetPlainText(status,text);}
@@ -340,7 +390,7 @@ function WM2ShowIconRules(resourcePath,getPreviewContext) {
             if(typeof wholeScene==="boolean")previewWholeFigure=wholeScene;
             var next=support.clone(model.config),note="";
             if(includeForm && model.dirty() && model.form.pattern && model.form.icon && !WM2SettingsIsLegacyKind(model.form.kind)) {
-                var index=model.active>=0?model.active:next.iconRules.length;next.iconRules[index]=support.clone(model.form);
+                var index=model.active>=0?model.active:next.iconRules.length;next.iconRules[index]=model.ruleFromForm(index);
                 var checked=WM2SettingsValidate(support,next);
                 if(checked.ok)next=checked.config;
                 else {next=support.clone(model.config);note="Draft is invalid; preview keeps the rule list.";}
@@ -351,20 +401,20 @@ function WM2ShowIconRules(resourcePath,getPreviewContext) {
             WM2SettingsRenderMenuPreview(preview,result,function(node){choosePreviewTarget(node,result.owner);},function(owner){returnToOwner(owner,result.activeNode);},resourcePath);
         }catch(e){WM2SettingsRenderMenuPreview(preview,{ok:false,message:"Preview unavailable: "+String(e),rows:[]});}
     }
-    function populate(){populating=true;try{
-        list.clear();for(var n=0;n<model.config.iconRules.length;n++){var rule=model.config.iconRules[n];list.insertItem((n+1)+". "+WM2SettingsKindLabel(rule.kind)+" | "+rule.pattern+" -> "+rule.icon);}
-        for(var selected=0;selected<model.config.iconRules.length;selected++)list.setSelected(selected,false);
-        list.currentItem=model.active;if(model.active>=0)list.setSelected(model.active,true);
-        kind.currentItem=kinds.indexOf(model.form.kind);pattern.text=model.form.pattern;
+    function populate(whole,includeForm){populating=true;try{
+        var entries=[];for(var n=0;n<model.config.iconRules.length;n++){var rule=model.config.iconRules[n],enabled=WM2SettingsRuleEnabled(rule);entries.push({name:"rule"+n,text:rule.pattern,detail:(!enabled?"Disabled | ":"")+WM2SettingsKindLabel(rule.kind)+" | "+rule.icon,enabled:enabled});}
+        list.populate(entries,model.active>=0?"rule"+model.active:null);
+        kind.select(kinds.indexOf(model.form.kind),false,model.form.kind);pattern.text=model.form.pattern;
         var index=iconValues.indexOf(model.form.icon);if(index<0&&model.form.icon){iconValues.push(model.form.icon);icon.addItem(model.form.icon+" [missing]");index=iconValues.length-1;}icon.currentItem=index;
         var hasSelection=model.editable&&model.active>=0,canEdit=model.editable&&!WM2SettingsIsLegacyKind(model.form.kind);
-        kind.enabled=canEdit;pattern.enabled=canEdit;icon.enabled=canEdit;browse.enabled=canEdit;add.enabled=canEdit;clearDraft.enabled=model.editable;
+        kind.setEnabled(canEdit);pattern.enabled=canEdit;icon.enabled=canEdit;browse.enabled=canEdit;add.enabled=canEdit;clearDraft.enabled=model.editable;
         update.enabled=hasSelection&&canEdit;remove.enabled=hasSelection;up.enabled=hasSelection&&model.active>0;down.enabled=hasSelection&&model.active<model.config.iconRules.length-1;
-    }finally{populating=false;}refreshSelection();renderPreview(false,false);}
+    }finally{populating=false;}refreshSelection();renderPreview(typeof whole==="boolean"?whole:false,includeForm===true);}
     function perform(fn,clear){capture();try{var result=fn();if(!result.ok){say(result.message);return;}if(clear)model.clear();populate();say("Draft list updated. Save writes these changes.");}catch(e){say(String(e));}}
     function edited(){if(populating)return;capture();renderPreview(null,true);}
-    connect(kind,"currentIndexChanged(int)",edited);connect(pattern,"textChanged(const QString&)",edited);connect(icon,"currentIndexChanged(int)",edited);
-    connect(list,"selectionChanged(int)",function(index){if(populating)return;capture();var result=model.select(Number(index));if(!result.ok){populating=true;try{for(var n=0;n<model.config.iconRules.length;n++)list.setSelected(n,false);list.currentItem=model.active;if(model.active>=0)list.setSelected(model.active,true);}finally{populating=false;}say(result.message);return;}populate();});
+    connect(pattern,"textChanged(const QString&)",edited);connect(icon,"currentIndexChanged(int)",edited);
+    function selectRule(index){if(populating)return;capture();var result=model.select(Number(index));if(!result.ok){populating=true;try{list.select(model.active,false);}finally{populating=false;}say(result.message);return;}populate();if(model.active>=0){populating=true;try{list.select(model.active,true);}finally{populating=false;}}}
+    function toggleRuleEnabled(index,enabled){if(populating)return;capture();var keepWhole=previewWholeFigure;try{var result=model.setEnabled(index,enabled);if(!result.ok){say(result.message);populate(keepWhole,true);return;}populate(keepWhole,true);if(list.rows[index])try{list.rows[index].checkBox.getWidget().setFocus();list.scroll.ensureWidgetVisible(list.rows[index].widget,8,8);}catch(e){}say(enabled?"Rule enabled in this draft.":"Rule disabled in this draft.");}catch(e){say(String(e));}}
     connect(clearDraft,"clicked()",function(){perform(model.resetDraft,false);say("Form cleared; no rule was added.");});
     connect(add,"clicked()",function(){perform(function(){return model.commit(true);},true);});connect(update,"clicked()",function(){perform(function(){return model.active<0?{ok:false,message:"Select a rule to update."}:model.commit(false);},true);});connect(remove,"clicked()",function(){perform(model.remove,false);});
     connect(up,"clicked()",function(){perform(function(){return model.move(-1);},false);});connect(down,"clicked()",function(){perform(function(){return model.move(1);},false);});

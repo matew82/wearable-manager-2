@@ -34,6 +34,7 @@ const suites=[
  ['features/figure-ui.cjs','--source-root',root],
  ['features/figure-entry.cjs','--sourceRoot',root],
  ['features/ui.cjs'],
+ ['features/icon-layout.cjs','--source-root',root],
  ['features/menu-preview.cjs'],
  ['features/asset-icons.cjs'],
  ['features/icon-import.cjs'],

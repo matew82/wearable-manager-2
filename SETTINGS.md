@@ -6,6 +6,10 @@ Open **Wearables Manager Icon Rules** or **Wearables Manager Supported Figures**
 
 When exactly one scene object is selected, Pattern starts with its label in **Exact label** mode. With no selection or several selections, the form stays blank and a notice explains how to use the selection. Manual rules remain available. **Use Selected Name/Label/AssetId** copies actual text into Pattern while keeping the chosen Match mode. Choose Match separately. Each button requires one eligible active object and is disabled when the pattern already equals that value, ignoring case; AssetId also requires a nonempty identifier. The actual assetId is displayed separately. These buttons refresh when the pattern or editing target changes. Bones are not selected-item icon targets; fitted clothing and props remain eligible.
 
+Choose Match with one of six 32×32 icon buttons. Exactly one modern mode stays selected, showing its supplied `On` image and full name on the right; the other five use their normal images. Clicking a mode, loading a rule and Clear Draft update the image pair and words together. A saved legacy prefix displays its original mode name and keeps all six modern buttons disabled until Clear Draft. The sole large-font instruction explains case-insensitive literal word boundaries outside the entire pattern.
+
+Rules use the same larger, wrapping label rows as the figure editors. The checkbox on the left enables or disables that rule; the adjacent arrow selects it for editing. These actions are separate: toggling a checkbox retains the current editing row and pending form. Disabled rules remain in the draft and saved settings, and other enabled rules or built-in icons can supply the image. Save applies the draft; Cancel discards it. Moving or editing a disabled rule retains its disabled state.
+
 Choose a PNG from the icon list, or **Browse PNG**. The file picker starts in this WM2 installation's `Resources` icons directory. An external PNG is copied into that directory under its original basename. If a different file already uses that name, you must choose another filename or cancel; existing files are never overwritten. Selecting the same canonical file already in Resources reuses it without copying. Failed/cancelled imports keep the current icon choice. Imported files stay available in Resources even if you later cancel the settings draft.
 
 **Clear Draft** deselects the rule and clears the form without adding it. **Add Rule** adds the form as a new row in the draft list; **Update Rule** replaces the selected row. **Save** writes the draft list and also commits a changed valid form. **Cancel** discards settings edits. Clear Draft is useful for abandoning an invalid form or starting a new rule while viewing a legacy row.
@@ -72,5 +76,7 @@ Save creates or updates `Resources/WM2 Settings.json`. It does not overwrite `Re
 ## Validation status
 
 Schema 2 adds bounded protected-child profiles. Schema 1 migrates in memory while preserving every saved figure name and icon rule; the file changes only on an explicit Save. Installation does not rewrite user settings.
+
+Icon rules optionally carry a Boolean `enabled` field. Absence means enabled; explicit values are retained. Existing settings stay untouched during installation. Earlier WM2 builds that require exactly three rule fields cannot read saved enable/disable flags; use this build for those settings.
 
 These settings changes have source tests and isolated mocks. Native DAZ4/DAZ6 dialog layout, PNG loading and filesystem behavior remain for user runtime verification; these checks do not launch DAZ. The earlier transfer hotfix remains included. The broader metadata/emissive repair candidate is separate and has not been installed with these settings features.

@@ -96,7 +96,14 @@ var WM2Support = (function () {
             var ruleSeen = {}, foldedSeen = {}, warnings = [], nameSeen = {}, kinds = {exactName:1, exactLabel:1, exactAssetId:1, nameWord:1, labelWord:1, assetIdWord:1, labelPrefix:1, namePrefix:1};
             for (var i = 0; i < config.iconRules.length; i++) {
                 var rule = config.iconRules[i];
-                if (!object(rule) || !keysExactly(rule, {kind:1, pattern:1, icon:1})) return invalid("Icon rule " + (i + 1) + " must contain only kind, pattern and icon.");
+                if (!object(rule)) return invalid("Icon rule " + (i + 1) + " must contain kind, pattern, icon and optional enabled.");
+                var ruleFields = {kind:1, pattern:1, icon:1}, hasEnabled = own.call(rule, "enabled"), enabled;
+                if (hasEnabled) ruleFields.enabled = 1;
+                if (!keysExactly(rule, ruleFields)) return invalid("Icon rule " + (i + 1) + " must contain only kind, pattern, icon and optional enabled.");
+                if (hasEnabled) {
+                    enabled = rule.enabled;
+                    if (typeof enabled !== "boolean") return invalid("Icon rule " + (i + 1) + " enabled must be a Boolean.");
+                }
                 if (typeof rule.kind !== "string" || !own.call(kinds, rule.kind)) return invalid("Icon rule " + (i + 1) + " has an unsupported kind.");
                 var patternLimit=rule.kind==="exactAssetId" || rule.kind==="assetIdWord"?MAX_ASSET_PATTERN:MAX_PATTERN;
                 if (!cleanString(rule.pattern, patternLimit)) return invalid("Icon rule " + (i + 1) + " requires a nonempty pattern of at most " + patternLimit + " characters without control characters.");
@@ -108,7 +115,9 @@ var WM2Support = (function () {
                 var foldedKey="_"+rule.kind+":"+rule.pattern.toLowerCase();
                 if(own.call(foldedSeen,foldedKey))warnings.push("Icon rules "+(foldedSeen[foldedKey]+1)+" and "+(i+1)+" differ only by case; the earlier matching row wins.");
                 else foldedSeen[foldedKey]=i;
-                normalized.iconRules.push({kind:rule.kind, pattern:rule.pattern, icon:rule.icon});
+                var normalizedRule = {kind:rule.kind, pattern:rule.pattern, icon:rule.icon};
+                if (hasEnabled) normalizedRule.enabled = enabled;
+                normalized.iconRules.push(normalizedRule);
             }
             for (var n = 0; n < config.supportedFigures.length; n++) {
                 var name = config.supportedFigures[n];
@@ -407,7 +416,7 @@ matchIcon: function (rules, node) {
     var exactLabel = this.normalizeCopyLabel(label), best = null;
     for (var i = 0; i < rules.length; i++) {
         var rule = rules[i];
-        if (!rule || typeof rule.pattern != "string" || rule.pattern.length == 0 || typeof rule.icon != "string" || rule.icon.length == 0) continue;
+        if (!rule || (Object.prototype.hasOwnProperty.call(rule, "enabled") && rule.enabled === false) || typeof rule.pattern != "string" || rule.pattern.length == 0 || typeof rule.icon != "string" || rule.icon.length == 0) continue;
         var rank = 3, length = 0, fieldRank = 0, matched = false;
         if (rule.kind == "exactName") {
             rank = 0; matched = name == rule.pattern.toLowerCase();
