@@ -34,16 +34,18 @@ function world(rules=[rule('Original'),rule('Beta')]){
  const owner=node('Genesis9','Main Figure','DzFigure'),a=node('ItemAlpha','Alpha'),b=node('ItemBeta','Beta');a.parent=b.parent=owner;owner.children=[a,b];
  return {e:environment(rules,{selected:a,nodes:[owner,a,b]}),owner,a,b};
 }
-function signal(widget,signature,...values){const callbacks=widget.signals[signature]||[];assert.equal(callbacks.length,1,widget.kind+' '+signature);callbacks[0](...values);}
+function signal(e,widget,signature,...values){const callbacks=widget.signals[signature]||[];assert.equal(callbacks.length,1,widget.kind+' '+signature);assert.equal(typeof e.emit,'function','Root fixture must expose instrumented emit');e.emit(widget,signature,...values);}
 function modeIcons(e,index){const picker=e.modePicker();assert.equal(picker.currentItem,index);assert.equal(picker.buttons.filter(button=>button.checked).length,index>=0?1:0);for(let i=0;i<6;i++){const button=picker.buttons[i];assert.equal(button.checked,i===index);assert.equal(button.wm2ModeIconFilename,i===index?modeOnPNGs[i]:modePNGs[i]);}}
-function clickMode(e,index){const picker=e.modePicker(),button=picker.buttons[index];assert(button.enabled);signal(button,'clicked()');assert.equal(picker.currentItem,index);assert.equal(e.g.focusedWidget,button);if(modePNGs.concat(modeOnPNGs).every(name=>e.g.pngs.includes(name)))modeIcons(e,index);return button;}
-function selectRule(e,index){const before=e.ruleEditor();assert(before.rows[index]);signal(before.rows[index].button,'clicked()');const editor=e.ruleEditor();assert.equal(editor.currentItem,index);assert(editor.rows[index].selected);assert.equal(e.g.focusedWidget,editor.rows[index].button);assert.equal(editor.scroll.visibilityRequests.at(-1),editor.rows[index].widget);return editor;}
-function toggle(e,index,value){const row=e.ruleEditor().rows[index];assert(row.checkBox.enabled);row.checkBox.checked=value;const editor=e.ruleEditor();assert.equal(editor.rows[index].checkBox.checked,value);assert.equal(e.g.focusedWidget,editor.rows[index].checkBox);assert.equal(editor.scroll.visibilityRequests.at(-1),editor.rows[index].widget);return editor;}
+function clickMode(e,index){const picker=e.modePicker(),button=picker.buttons[index];assert(button.enabled);signal(e,button,'clicked()');assert.equal(picker.currentItem,index);assert.equal(e.g.focusedWidget,button);if(modePNGs.concat(modeOnPNGs).every(name=>e.g.pngs.includes(name)))modeIcons(e,index);return button;}
+function selectRule(e,index){const before=e.ruleEditor();assert(before.rows[index]);signal(e,before.rows[index].button,'clicked()');const editor=e.ruleEditor();assert.equal(editor.currentItem,index);assert(editor.rows[index].selected);assert.equal(e.g.focusedWidget,editor.rows[index].button);assert.equal(editor.scroll.visibilityRequests.at(-1),editor.rows[index].widget);return editor;}
 function setForm(e,pattern,icon='B.PNG',mode=1){clickMode(e,mode);e.one('DzLineEdit').text=pattern;e.iconCombo().currentItem=e.iconCombo().items.indexOf(icon);assert(e.iconCombo().currentItem>=0);}
-function noWrites(e){assert.equal(e.g.sceneWrites,0);}
+function noWrites(e){assert.equal(e.g.sceneWrites,0);assert.equal(e.g.widgets.filter(widget=>widget.kind==='DzCheckBox').length,0);assert.equal(e.g.signalStack.length,0);assert.equal(e.g.destructiveReplacements.length,0,'Scroll contents must not be replaced');assert.equal(e.g.activeSenderDisposals.length,0,'A callback must not dispose its sender');assert.equal(e.g.scrollAttachments.filter(entry=>entry.insideSignal).length,0,'Signals must not attach scroll contents');for(const scroll of e.g.widgets.filter(widget=>widget.kind==='DzScrollArea'))assert.equal(e.g.scrollAttachments.filter(entry=>entry.scroll===scroll).length,1,'Each dialog scroll body is attached only once');}
 function open(e){return e.context.WM2ShowIconRules('C:/scratch/Resources');}
 function inside(widget,ancestor){for(let current=widget;current;current=current.parent)if(current===ancestor)return true;return false;}
-function clickTile(e,target){const body=e.one('DzScrollArea').widget,buttons=e.g.widgets.filter(widget=>widget.kind==='DzPushButton'&&inside(widget,body)&&widget.wm2EditingNode===target);assert.equal(buttons.length,1);signal(buttons[0],'clicked()');}
+function visible(widget){for(let current=widget;current;current=current.parent)if(current.deleted||current.visible===false||current.hidden===true)return false;return true;}
+function tile(e,target){const body=e.one('DzScrollArea').widget,buttons=e.g.widgets.filter(widget=>widget.kind==='DzPushButton'&&inside(widget,body)&&visible(widget)&&widget.wm2EditingNode===target);assert.equal(buttons.length,1);return buttons[0];}
+function clickTile(e,target){signal(e,tile(e,target),'clicked()');}
+function back(e){const body=e.one('DzScrollArea').widget,buttons=e.g.widgets.filter(widget=>widget.kind==='DzPushButton'&&inside(widget,body)&&visible(widget)&&widget.wm2OwnerNode);assert.equal(buttons.length,1);return buttons[0];}
 function selectedKind(e){const picker=e.modePicker();return picker.kinds[picker.currentItem];}
 
 test('bounded prefix and shared inclusion do not construct widgets or access IO',()=>{const e=environment();assert.equal(e.g.widgets.length,0);assert.equal(e.g.ioCalls,0);assert.equal(e.g.sceneReads,0);noWrites(e);});
@@ -61,7 +63,7 @@ test('six native mode buttons load all user normal/On pairs at 32 pixels with 44
  e.g.steps=[()=>{
   const picker=e.modePicker();assert.deepEqual(plain(picker.kinds),kinds);assert.equal(picker.buttons.length,6);
   assert.deepEqual(loaded.slice().sort(),modePNGs.concat(modeOnPNGs).sort());modeIcons(e,0);
-  for(let i=0;i<6;i++){const button=picker.buttons[i];assert.equal(button.wm2ModeKind,kinds[i]);assert(button.checkable);assert.equal(button.minWidth,44);assert.equal(button.maxWidth,44);assert.equal(button.minHeight,44);assert.equal(button.maxHeight,44);assert.equal(button.pixmap.width,32);assert.equal(button.pixmap.height,32);assert.equal(button.getWidget().iconSize.width,32);assert.equal(button.getWidget().iconSize.height,32);assert.equal(button.getWidget().autoDefault,false);assert.equal(button.text,'');assert(e.g.images.some(image=>image.deleted));}
+  for(let i=0;i<6;i++){const button=picker.buttons[i];assert.equal(button.wm2ModeKind,kinds[i]);assert(button.checkable);assert.equal(button.sizedFromIcon,true);assert.equal(button.minWidth,44);assert.equal(button.maxWidth,44);assert.equal(button.minHeight,44);assert.equal(button.maxHeight,44);assert.equal(button.pixmap.width,32);assert.equal(button.pixmap.height,32);assert.equal(button.getWidget().iconSize.width,32);assert.equal(button.getWidget().iconSize.height,32);assert.equal(button.getWidget().autoDefault,false);assert.equal(button.text,'');assert(e.g.images.some(image=>image.deleted));}
   const cached=picker.buttons.map(button=>({normal:button.wm2ModeNormalPixmap,on:button.wm2ModeOnPixmap}));
   for(let repeat=0;repeat<2;repeat++)for(let selected=0;selected<6;selected++){clickMode(e,selected);for(let i=0;i<6;i++)assert.equal(picker.buttons[i].pixmap,i===selected?cached[i].on:cached[i].normal);}
   assert.equal(loaded.length,12,'Mode selection reuses the twelve cached pixmaps without loading them again');
@@ -77,7 +79,7 @@ for(const throwing of [false,true])test('mode '+(throwing?'throwing PNG loader':
 test('loading each existing modern rule and Clear Draft synchronizes the single On icon without changing saved rules',()=>{
  for(let i=0;i<6;i++){
   const rules=[rule('Stored '+i,kinds[i],'A.png',false)],before=plain(rules),{e}=itemEnvironment(rules);
-  e.g.steps=[()=>{modeIcons(e,1);selectRule(e,0);modeIcons(e,i);assert.equal(e.one('DzLineEdit').text,'Stored '+i);e.click('Clear Draft');modeIcons(e,0);assert.equal(e.ruleEditor().currentItem,-1);assert.equal(e.one('DzLineEdit').text,'');assert.equal(e.ruleEditor().rows[0].checkBox.checked,false);return false;}];
+  e.g.steps=[()=>{modeIcons(e,1);selectRule(e,0);modeIcons(e,i);assert.equal(e.one('DzLineEdit').text,'Stored '+i);e.click('Clear Draft');modeIcons(e,0);assert.equal(e.ruleEditor().currentItem,-1);assert.equal(e.one('DzLineEdit').text,'');assert.equal(e.ruleEditor().entries[0].enabled,false);return false;}];
   assert.equal(open(e).saved,false);assert.deepEqual(rules,before);assert.equal(e.g.saved.length,0);noWrites(e);
  }
 });
@@ -96,69 +98,88 @@ test('both files missing for one pair leave its selected text fallback and all o
 });
 test('a throwing loader for one On file falls back to its normal image without disabling other pairs',()=>{
  const e=environment(),Pixmap=e.context.Pixmap;e.context.Pixmap=function(file){if(typeof file==='string'&&path.basename(file)===modeOnPNGs[2])throw Error('Damaged On icon');return new Pixmap(file);};
- e.g.steps=[()=>{const button=e.modePicker().buttons[2];signal(button,'clicked()');assert.equal(e.modePicker().currentItem,2);assert(button.checked);assert.equal(button.wm2ModeIconFilename,modePNGs[2]);assert.equal(button.pixmap,button.wm2ModeNormalPixmap);assert.equal(button.text,'');signal(e.modePicker().buttons[5],'clicked()');assert.equal(e.modePicker().buttons[5].wm2ModeIconFilename,modeOnPNGs[5]);assert.equal(button.wm2ModeIconFilename,modePNGs[2]);return false;}];open(e);noWrites(e);
+ e.g.steps=[()=>{const button=e.modePicker().buttons[2];signal(e,button,'clicked()');assert.equal(e.modePicker().currentItem,2);assert(button.checked);assert.equal(button.wm2ModeIconFilename,modePNGs[2]);assert.equal(button.pixmap,button.wm2ModeNormalPixmap);assert.equal(button.text,'');signal(e,e.modePicker().buttons[5],'clicked()');assert.equal(e.modePicker().buttons[5].wm2ModeIconFilename,modeOnPNGs[5]);assert.equal(button.wm2ModeIconFilename,modePNGs[2]);return false;}];open(e);noWrites(e);
 });
-test('rule rows place the enable checkbox before the arrow and large wrapped plain labels',()=>{
- const pattern='<Tag>& '.repeat(20),e=environment([rule(pattern),rule('Disabled','nameWord','B.PNG',false)]);e.g.steps=[()=>{
-  const editor=e.ruleEditor();for(let i=0;i<editor.rows.length;i++){const row=editor.rows[i],children=row.widget.wm2TestLayout.children.filter(child=>child.widget).map(child=>child.widget);assert.equal(children[0],row.checkBox);assert.equal(children[1],row.button);assert.equal(children[2],row.label.parent);assert.equal(row.checkBox.kind,'DzCheckBox');assert.equal(row.checkBox.checked,i===0);assert.equal(row.label.text,editor.entries[i].text);assert.equal(row.label.textFormat,e.context.DzLabel.PlainText);assert(row.label.wordWrap);assert(row.label.font.bold);assert(row.label.font.pointSize>=16);}
-  selectRule(e,1);assert.equal(e.one('DzLineEdit').text,'Disabled');assert.equal(e.ruleEditor().rows[0].checkBox.checked,true);assert.equal(e.ruleEditor().rows[1].checkBox.checked,false);return false;
+test('rule rows have only a left arrow and wrapped plain labels with a colored selected border',()=>{
+ const rules=[rule('<Tag>& '.repeat(20),'exactLabel','A.png',false),rule('Enabled','nameWord','B.PNG',true),rule('Default')],e=environment(rules);
+ e.g.steps=[()=>{
+  const editor=e.ruleEditor();assert.equal(e.g.widgets.filter(widget=>widget.kind==='DzCheckBox').length,0);
+  for(let i=0;i<editor.rows.length;i++){const row=editor.rows[i],children=row.widget.wm2TestLayout.children.filter(child=>child.widget).map(child=>child.widget);assert.equal(children[0],row.button);assert.equal(children[1],row.label.parent);assert(!row.checkBox);assert.equal(row.label.text,editor.entries[i].text);assert.equal(row.label.textFormat,e.context.DzLabel.PlainText);assert(row.label.wordWrap);assert(row.label.font.bold);assert(row.label.font.pointSize>=16);}
+  const rows=editor.rows.slice(),borders=rows.map(row=>row.widget.getWidget().styleSheet);
+  for(let selected=0;selected<3;selected++){selectRule(e,selected);assert.equal(editor.rows[selected],rows[selected]);assert.notEqual(rows[selected].widget.getWidget().styleSheet,borders[selected]);assert.equal(editor.rows.filter(row=>row.selected).length,1);}
+  return true;
+ }];assert(open(e).saved);assert.deepEqual(plain(e.g.saved[0].config.iconRules),rules);noWrites(e);
+});
+for(const status of ['future-schema','unreadable','path-error'])test(status+' disables editing and queued mode clicks preserve existing saved flags',()=>{
+ const rules=[rule('Alpha','exactLabel','A.png',false),rule('Beta','exactLabel','A.png',true),rule('Default')],before=plain(rules),e=environment(rules,{status,readOnly:true});
+ e.g.steps=[()=>{const picker=e.modePicker(),pattern=e.one('DzLineEdit').text;assert(picker.buttons.every(button=>!button.enabled));signal(e,picker.buttons[3],'clicked()');assert.equal(e.one('DzLineEdit').text,pattern);assert.equal(e.one('DzBasicDialog').acceptButton.enabled,false);return false;}];
+ assert.equal(open(e).saved,false);assert.equal(e.g.saved.length,0);assert.deepEqual(rules,before);noWrites(e);
+});
+for(const kind of ['namePrefix','labelPrefix'])test(kind+' stays legacy with every mode icon off and its enabled flag unchanged',()=>{
+ const rules=[rule('Alpha',kind,'A.png',false)],e=environment(rules);e.g.steps=[()=>{selectRule(e,0);modeIcons(e,-1);assert.equal(e.modePicker().label.text,e.context.WM2SettingsKindLabel(kind));assert(e.modePicker().buttons.every(button=>!button.enabled&&!button.checked));assert.equal(e.one('DzLineEdit').enabled,false);selectRule(e,0);modeIcons(e,-1);return true;}];assert(open(e).saved);assert.deepEqual(plain(e.g.saved[0].config.iconRules),rules);noWrites(e);
+});
+for(const enabled of [false,true,undefined])test('editing and Save retain existing enabled '+String(enabled)+' without adding a missing flag',()=>{
+ const {e}=itemEnvironment([rule('Original','exactLabel','A.png',enabled),rule('Beta')]);e.g.steps=[()=>{selectRule(e,0);setForm(e,'Alpha');selectRule(e,0);assert.equal(e.one('DzLineEdit').text,'Alpha');return true;}];assert(open(e).saved);assert.deepEqual(plain(e.g.saved[0].config.iconRules),[rule('Alpha','exactLabel','B.PNG',enabled),rule('Beta')]);noWrites(e);
+});
+for(const enabled of [false,true,undefined])test('Cancel discards edits and keeps enabled '+String(enabled)+' caller data untouched',()=>{
+ const rules=[rule('Original','exactLabel','A.png',enabled),rule('Beta')],before=plain(rules),{e}=itemEnvironment(rules);e.g.steps=[()=>{selectRule(e,0);setForm(e,'Alpha');return false;}];assert.equal(open(e).saved,false);assert.deepEqual(rules,before);assert.equal(e.g.saved.length,0);noWrites(e);
+});
+for(const enabled of [false,true,undefined])test('Move retains dirty edits and enabled '+String(enabled)+' on the moved rule',()=>{
+ const {e}=itemEnvironment([rule('Original','exactLabel','A.png',enabled),rule('Beta','exactLabel','A.png',false)]);e.g.steps=[()=>{selectRule(e,0);setForm(e,'Alpha');const rows=e.ruleEditor().rows.slice();e.click('Move Down');assert.equal(e.ruleEditor().currentItem,1);assert.equal(e.ruleEditor().entries[1].text,'Alpha');assert.equal(e.ruleEditor().rows[0],rows[0]);assert.equal(e.ruleEditor().rows[1],rows[1]);assert.equal(e.ruleEditor().scroll.visibilityRequests.at(-1),rows[1].widget);return true;}];assert(open(e).saved);assert.deepEqual(plain(e.g.saved[0].config.iconRules),[rule('Beta','exactLabel','A.png',false),rule('Alpha','exactLabel','B.PNG',enabled)]);noWrites(e);
+});
+for(const enabled of [false,true,undefined])test('Update Rule retains existing enabled '+String(enabled)+' and stable row identity',()=>{
+ const {e}=itemEnvironment([rule('Original','exactLabel','A.png',enabled),rule('Beta')]);e.g.steps=[()=>{selectRule(e,0);const row=e.ruleEditor().rows[0];setForm(e,'Alpha');e.click('Update Rule');assert.equal(e.ruleEditor().rows[0],row);assert.equal(e.one('DzLineEdit').text,'');return true;}];assert(open(e).saved);assert.deepEqual(plain(e.g.saved[0].config.iconRules),[rule('Alpha','exactLabel','B.PNG',enabled),rule('Beta')]);noWrites(e);
+});
+for(const invalid of [false,true])test('Remove discards its '+(invalid?'invalid':'valid')+' edited row while retaining other saved flags',()=>{
+ const {e}=itemEnvironment([rule('Original','exactLabel','A.png',false),rule('Beta','exactLabel','A.png',true),rule('Default')]);e.g.steps=[()=>{selectRule(e,0);setForm(e,invalid?'   ':'Alpha');e.click('Remove');assert.equal(e.one('DzLineEdit').text,'');assert.equal(e.ruleEditor().entries.length,2);return true;}];assert(open(e).saved);assert.deepEqual(plain(e.g.saved[0].config.iconRules),[rule('Beta','exactLabel','A.png',true),rule('Default')]);noWrites(e);
+});
+test('repeated rule arrow selection reuses rows and both scroll bodies throughout native clicked callbacks',()=>{
+ const rules=[rule('Alpha'),rule('Beta','exactLabel','A.png',false),rule('Third','exactLabel','A.png',true)],{e}=itemEnvironment(rules);e.g.steps=[()=>{
+  const editor=e.ruleEditor(),rows=editor.rows.slice(),ruleBody=editor.scroll.widget,previewBody=e.one('DzScrollArea').widget;
+  for(let repeat=0;repeat<4;repeat++)for(let index=0;index<3;index++){selectRule(e,index);assert.equal(editor.rows[index],rows[index]);assert.equal(editor.rows[index].button,rows[index].button);assert.equal(editor.scroll.widget,ruleBody);assert.equal(e.one('DzScrollArea').widget,previewBody);}
+  return true;
+ }];assert(open(e).saved);assert.deepEqual(plain(e.g.saved[0].config.iconRules),rules);noWrites(e);
+});
+test('repeated mode edits reuse rule and preview widgets while preserving a pending form',()=>{
+ const {e,item}=itemEnvironment([rule('Alpha')]);e.g.steps=[()=>{
+  selectRule(e,0);const editor=e.ruleEditor(),row=editor.rows[0],previewBody=e.one('DzScrollArea').widget,tileButton=tile(e,item);e.one('DzLineEdit').text='Pending';
+  for(let repeat=0;repeat<3;repeat++)for(let index=0;index<6;index++){clickMode(e,index);assert.equal(editor.rows[0],row);assert.equal(e.one('DzScrollArea').widget,previewBody);assert.equal(tile(e,item),tileButton);assert.equal(e.one('DzLineEdit').text,'Pending');}
+  return false;
+ }];assert.equal(open(e).saved,false);assert.equal(e.g.saved.length,0);noWrites(e);
+});
+test('whole-owner preview keeps the same tile widgets while repeated selections update their current state',()=>{
+ const {e,a,b}=world([rule('Alpha'),rule('Beta','exactLabel','A.png',false)]);e.g.steps=[()=>{
+  e.click('Preview Scene');const body=e.one('DzScrollArea').widget,first=tile(e,a),second=tile(e,b);
+  for(let repeat=0;repeat<3;repeat++){clickTile(e,b);assert.equal(e.preview().rows.length,2);assert.equal(tile(e,a),first);assert.equal(tile(e,b),second);clickTile(e,a);assert.equal(e.one('DzScrollArea').widget,body);assert.equal(tile(e,a),first);assert.equal(tile(e,b),second);}
+  assert.equal(e.g.selected,a);return false;
  }];open(e);noWrites(e);
 });
-for(const status of ['future-schema','unreadable','path-error'])test(status+' disables modes and checkboxes and rejects queued edit signals',()=>{
- const e=environment([rule('Alpha')],{status,readOnly:true});e.g.steps=[()=>{
-  const picker=e.modePicker(),form=e.one('DzLineEdit').text;assert(picker.buttons.every(button=>!button.enabled));assert.equal(e.ruleEditor().rows[0].checkBox.enabled,false);
-  signal(picker.buttons[3],'clicked()');assert.equal(e.one('DzLineEdit').text,form);const checkbox=e.ruleEditor().rows[0].checkBox;checkbox.checked=false;assert.equal(e.ruleEditor().rows[0].checkBox.checked,true);assert.equal(e.g.saved.length,0);assert.equal(e.one('DzBasicDialog').acceptButton.enabled,false);return false;
- }];assert.equal(open(e).saved,false);noWrites(e);
+for(const invalid of [false,true])test('tile and Back clicks '+(invalid?'block invalid':'commit valid')+' dirty forms with stable widgets and unchanged enabled flags',()=>{
+ const {e,a,b,owner}=world([rule('Original','exactLabel','A.png',false),rule('Beta','exactLabel','A.png',true)]);
+ e.g.steps=[()=>{
+  selectRule(e,0);setForm(e,invalid?'   ':'Alpha');e.click('Preview Scene');const body=e.one('DzScrollArea').widget,arrow=e.ruleEditor().rows[0].button,beta=tile(e,b),ownerButton=back(e);
+  clickTile(e,b);
+  if(invalid){assert.equal(e.one('DzBasicDialog').caption,'Icon rules for Alpha [ItemAlpha]');assert.equal(e.one('DzLineEdit').text,'   ');assert(e.status().text.includes('Keep this draft:'));signal(e,ownerButton,'clicked()');assert.equal(e.one('DzBasicDialog').caption,'Icon rules for Alpha [ItemAlpha]');assert.equal(e.one('DzLineEdit').text,'   ');}
+  else{assert.equal(e.one('DzBasicDialog').caption,'Icon rules for Beta [ItemBeta]');signal(e,back(e),'clicked()');assert.equal(e.preview().activeNode.elementID,owner.elementID);clickTile(e,a);assert.equal(e.one('DzBasicDialog').caption,'Icon rules for Alpha [ItemAlpha]');}
+  assert.equal(e.one('DzScrollArea').widget,body);assert.equal(tile(e,b),beta);assert.equal(e.ruleEditor().rows[0].button,arrow);assert.equal(e.g.selected,a);return !invalid;
+ }];assert.equal(open(e).saved,!invalid);assert.equal(e.g.saved.length,invalid?0:1);if(!invalid)assert.deepEqual(plain(e.g.saved[0].config.iconRules),[rule('Alpha','exactLabel','B.PNG',false),rule('Beta','exactLabel','A.png',true)]);noWrites(e);
 });
-for(const kind of ['namePrefix','labelPrefix'])test(kind+' stays legacy with every mode icon off after selection and independent disabling',()=>{
- const e=environment([rule('Alpha',kind)]);e.g.steps=[()=>{selectRule(e,0);modeIcons(e,-1);assert.equal(e.modePicker().label.text,e.context.WM2SettingsKindLabel(kind));assert(e.modePicker().buttons.every(button=>!button.enabled&&!button.checked));assert.equal(e.one('DzLineEdit').enabled,false);toggle(e,0,false);modeIcons(e,-1);assert.equal(e.ruleEditor().currentItem,0);return true;}];assert(open(e).saved);assert.deepEqual(plain(e.g.saved[0].config.iconRules),[rule('Alpha',kind,'A.png',false)]);noWrites(e);
+test('queued clicks from a hidden inactive rule arrow cannot select another entry after removal',()=>{
+ const {e}=itemEnvironment([rule('Alpha'),rule('Beta'),rule('Third')]);e.g.steps=[()=>{
+  selectRule(e,2);const inactive=e.ruleEditor().rows[2].button;e.click('Remove');assert.equal(e.ruleEditor().currentItem,-1);assert(!visible(inactive));signal(e,inactive,'clicked()');assert.equal(e.ruleEditor().currentItem,-1);assert.equal(e.one('DzLineEdit').text,'');return true;
+ }];assert(open(e).saved);assert.deepEqual(plain(e.g.saved[0].config.iconRules),[rule('Alpha'),rule('Beta')]);noWrites(e);
 });
-for(const dirty of ['valid','invalid'])for(const target of ['active','neighbor'])test(dirty+' dirty form survives '+target+' checkbox toggles independently of row selection',()=>{
- const {e}=itemEnvironment(),pattern=dirty==='valid'?'Alpha':'   ';e.g.steps=[()=>{
-  selectRule(e,0);setForm(e,pattern);const selected=e.ruleEditor().currentItem,index=target==='active'?0:1;toggle(e,index,false);
-  assert.equal(e.ruleEditor().currentItem,selected);assert.equal(e.one('DzLineEdit').text,pattern);assert.equal(selectedKind(e),'exactLabel');assert.equal(e.iconCombo().items[e.iconCombo().currentItem],'B.PNG');
-  if(dirty==='valid'&&target==='neighbor')assert.equal(e.preview().rows[0].icon,'B.PNG');
-  if(dirty==='valid'&&target==='active'){assert.notEqual(e.preview().rows[0].source,'custom');toggle(e,index,true);assert.equal(e.preview().rows[0].icon,'B.PNG');toggle(e,index,false);}
-  return true;
- }];if(dirty==='invalid')e.g.steps.push(()=>{assert.equal(e.one('DzLineEdit').text,pattern);assert.equal(e.ruleEditor().rows[target==='active'?0:1].checkBox.checked,false);assert(e.status().text.length>0);return false;});
- const result=open(e);assert.equal(result.saved,dirty==='valid');assert.equal(e.g.saved.length,dirty==='valid'?1:0);
- if(dirty==='valid'){const expected=[rule('Alpha','exactLabel','B.PNG'),rule('Beta')];expected[target==='active'?0:1].enabled=false;assert.deepEqual(plain(e.g.saved[0].config.iconRules),expected);}noWrites(e);
+test('queued clicks from hidden preview tile and Back controls cannot change a cleared selection',()=>{
+ const {e,b}=world();e.g.steps=[()=>{
+  e.click('Preview Scene');const inactiveTile=tile(e,b),inactiveBack=back(e);e.g.setSelection([]);const caption=e.one('DzBasicDialog').caption;assert(!visible(inactiveTile));assert(!visible(inactiveBack));signal(e,inactiveTile,'clicked()');signal(e,inactiveBack,'clicked()');assert.equal(e.one('DzBasicDialog').caption,caption);assert.equal(e.g.saved.length,0);return false;
+ }];open(e);noWrites(e);
 });
-for(const target of ['active','neighbor'])test('Cancel discards valid dirty form and '+target+' toggle while retaining caller config',()=>{
- const rules=[rule('Original'),rule('Beta')],before=plain(rules),{e}=itemEnvironment(rules);e.g.steps=[()=>{selectRule(e,0);setForm(e,'Alpha');toggle(e,target==='active'?0:1,false);return false;}];assert.equal(open(e).saved,false);assert.equal(e.g.saved.length,0);assert.deepEqual(rules,before);noWrites(e);
+test('invalid dirty Move is blocked without replacing rows or losing the form or disabled flag',()=>{
+ const {e}=itemEnvironment([rule('Original','exactLabel','A.png',false),rule('Beta')]);e.g.steps=[()=>{selectRule(e,0);const row=e.ruleEditor().rows[0];setForm(e,'   ');e.click('Move Down');assert.equal(e.ruleEditor().currentItem,0);assert.equal(e.ruleEditor().rows[0],row);assert.deepEqual(plain(e.ruleEditor().entries.map(entry=>entry.text)),['Original','Beta']);assert.equal(e.one('DzLineEdit').text,'   ');assert.equal(e.iconCombo().items[e.iconCombo().currentItem],'B.PNG');assert.equal(e.g.saved.length,0);return false;}];assert.equal(open(e).saved,false);noWrites(e);
 });
-test('neighbor checkbox toggle retains the unsaved icon preview and whole-owner scope',()=>{
- const {e,a}=world();e.g.steps=[()=>{
-  selectRule(e,0);setForm(e,'Alpha');e.click('Preview Scene');assert.equal(e.preview().wholeFigure,true);assert.equal(e.preview().rows.length,2);
-  toggle(e,1,false);assert.equal(e.preview().wholeFigure,true);assert.equal(e.preview().rows.length,2);assert.equal(e.preview().rows.find(row=>row.node.elementID===a.elementID).icon,'B.PNG');
-  toggle(e,0,false);toggle(e,0,true);assert.equal(e.preview().wholeFigure,true);assert.equal(e.preview().rows.length,2);assert.equal(e.preview().rows.find(row=>row.node.elementID===a.elementID).icon,'B.PNG');assert.equal(e.one('DzLineEdit').text,'Alpha');return false;
- }];assert.equal(open(e).saved,false);assert.equal(e.g.saved.length,0);assert.equal(e.g.selected,a);noWrites(e);
-});
-test('Update Rule preserves the active disabled flag while saving changed form fields',()=>{
- const {e}=itemEnvironment([rule('Original','exactLabel','A.png',false),rule('Beta')]);e.g.steps=[()=>{selectRule(e,0);setForm(e,'Alpha');e.click('Update Rule');assert.equal(e.ruleEditor().rows[0].checkBox.checked,false);assert.equal(e.one('DzLineEdit').text,'');return true;}];assert(open(e).saved);assert.deepEqual(plain(e.g.saved[0].config.iconRules),[rule('Alpha','exactLabel','B.PNG',false),rule('Beta')]);noWrites(e);
-});
-test('Move retains dirty edits and enable flags on their original rules',()=>{
- const {e}=itemEnvironment([rule('Original','exactLabel','A.png',false),rule('Beta','exactLabel','A.png',true)]);e.g.steps=[()=>{selectRule(e,0);setForm(e,'Alpha');e.click('Move Down');assert.equal(e.ruleEditor().currentItem,1);assert.equal(e.ruleEditor().entries[1].text,'Alpha');assert.equal(e.ruleEditor().rows[1].checkBox.checked,false);assert.equal(e.ruleEditor().rows[0].checkBox.checked,true);assert.equal(e.ruleEditor().scroll.visibilityRequests.at(-1),e.ruleEditor().rows[1].widget);return true;}];assert(open(e).saved);assert.deepEqual(plain(e.g.saved[0].config.iconRules),[rule('Beta','exactLabel','A.png',true),rule('Alpha','exactLabel','B.PNG',false)]);noWrites(e);
-});
-for(const invalid of [false,true])test('Remove discards its '+(invalid?'invalid':'valid')+' edited row while retaining another disabled rule',()=>{
- const {e}=itemEnvironment([rule('Original','exactLabel','A.png',false),rule('Beta','exactLabel','A.png',false)]);e.g.steps=[()=>{selectRule(e,0);setForm(e,invalid?'   ':'Alpha');e.click('Remove');assert.equal(e.one('DzLineEdit').text,'');assert.equal(e.ruleEditor().entries.length,1);assert.equal(e.ruleEditor().rows[0].checkBox.checked,false);return true;}];assert(open(e).saved);assert.deepEqual(plain(e.g.saved[0].config.iconRules),[rule('Beta','exactLabel','A.png',false)]);noWrites(e);
-});
-for(const invalid of [false,true])test('preview tile change '+(invalid?'blocks invalid':'commits valid')+' dirty form without losing enable flags',()=>{
- const {e,a,b}=world([rule('Original','exactLabel','A.png',false),rule('Beta')]);e.g.steps=[()=>{selectRule(e,0);setForm(e,invalid?'   ':'Alpha');e.click('Preview Scene');clickTile(e,b);
-  assert.equal(e.one('DzBasicDialog').caption,invalid?'Icon rules for Alpha [ItemAlpha]':'Icon rules for Beta [ItemBeta]');assert.equal(e.ruleEditor().rows[0].checkBox.checked,false);if(invalid){assert.equal(e.one('DzLineEdit').text,'   ');assert(e.status().text.includes('Keep this draft:'));}assert.equal(e.g.selected,a);return !invalid;
- }];assert.equal(open(e).saved,!invalid);assert.equal(e.g.saved.length,invalid?0:1);if(!invalid)assert.deepEqual(plain(e.g.saved[0].config.iconRules),[rule('Alpha','exactLabel','B.PNG',false),rule('Beta')]);noWrites(e);
-});
-test('stale checkbox signals cannot enable or disable a replacement row after repopulation',()=>{
- const {e}=itemEnvironment();e.g.steps=[()=>{const old=e.ruleEditor().rows[1].checkBox;selectRule(e,0);old.checked=false;assert.equal(e.ruleEditor().rows[1].checkBox.checked,true);assert.equal(e.ruleEditor().currentItem,0);toggle(e,1,false);old.checked=true;assert.equal(e.ruleEditor().rows[1].checkBox.checked,false);return true;}];assert(open(e).saved);assert.deepEqual(plain(e.g.saved[0].config.iconRules),[rule('Original'),rule('Beta','exactLabel','A.png',false)]);noWrites(e);
-});
-test('checkbox changes with no selected editor row leave the fresh target form and selection untouched',()=>{
- const {e}=itemEnvironment();e.g.steps=[()=>{assert.equal(e.ruleEditor().currentItem,-1);const pattern=e.one('DzLineEdit').text,kind=selectedKind(e);toggle(e,1,false);assert.equal(e.ruleEditor().currentItem,-1);assert.equal(e.one('DzLineEdit').text,pattern);assert.equal(selectedKind(e),kind);return true;}];assert(open(e).saved);assert.deepEqual(plain(e.g.saved[0].config.iconRules),[rule('Original'),rule('Beta','exactLabel','A.png',false)]);noWrites(e);
-});
-test('invalid dirty Move is blocked while retaining form flag and rule order for recovery or Cancel',()=>{
- const {e}=itemEnvironment([rule('Original','exactLabel','A.png',false),rule('Beta')]);e.g.steps=[()=>{selectRule(e,0);setForm(e,'   ');e.click('Move Down');assert.equal(e.ruleEditor().currentItem,0);assert.deepEqual(plain(e.ruleEditor().entries.map(row=>row.text)),['Original','Beta']);assert.equal(e.ruleEditor().rows[0].checkBox.checked,false);assert.equal(e.one('DzLineEdit').text,'   ');assert.equal(e.iconCombo().items[e.iconCombo().currentItem],'B.PNG');assert.equal(e.g.saved.length,0);return false;}];assert.equal(open(e).saved,false);noWrites(e);
-});
-test('failed Save retains dirty edits and disabled state in the draft before Cancel',()=>{
- const {e}=itemEnvironment(undefined,{saveFailure:true});e.g.steps=[()=>{selectRule(e,0);setForm(e,'Alpha');toggle(e,0,false);return true;},()=>{assert.equal(e.one('DzLineEdit').text,'Alpha');assert.equal(e.ruleEditor().rows[0].checkBox.checked,false);assert.equal(e.iconCombo().items[e.iconCombo().currentItem],'B.PNG');assert(e.status().text.includes('Forced save failure'));return false;}];assert.equal(open(e).saved,false);assert.equal(e.g.saved.length,1);assert.deepEqual(plain(e.g.saved[0].config.iconRules),[rule('Alpha','exactLabel','B.PNG',false),rule('Beta')]);noWrites(e);
+test('failed Save retains edited fields disabled state and stable widget identities before Cancel',()=>{
+ const {e}=itemEnvironment([rule('Original','exactLabel','A.png',false),rule('Beta')],{saveFailure:true});let row,body;
+ e.g.steps=[()=>{selectRule(e,0);row=e.ruleEditor().rows[0];body=e.one('DzScrollArea').widget;setForm(e,'Alpha');return true;},()=>{assert.equal(e.one('DzLineEdit').text,'Alpha');assert.equal(e.ruleEditor().rows[0],row);assert.equal(e.one('DzScrollArea').widget,body);assert.equal(e.iconCombo().items[e.iconCombo().currentItem],'B.PNG');assert(e.status().text.includes('Forced save failure'));return false;}];assert.equal(open(e).saved,false);assert.equal(e.g.saved.length,1);assert.deepEqual(plain(e.g.saved[0].config.iconRules),[rule('Alpha','exactLabel','B.PNG',false),rule('Beta')]);noWrites(e);
 });
 
 const failures=tests.filter(test=>!test.pass);

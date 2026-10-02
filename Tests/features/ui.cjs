@@ -12,12 +12,16 @@ function test(name, run) { try { run(); cases.push({name,status:'PASS'}); } catc
 function environment(options={}) {
   const g = {widgets:[],steps:[],saved:[],sceneReads:0,sceneWrites:0,ioCalls:0,nodes:options.nodes||[],selected:options.selected||null,selectedNodes:options.selectedNodes||(options.selected?[options.selected]:[]),browseCalls:[],importCalls:[],disconnected:0,images:[],
     families:options.families||['Georgia','Arial'],pngs:options.pngs||['A.png','B.PNG','Wearables Manager - Save.png','Wearables Manager - Cancel.png'],execs:0};
-  function emit(widget, signature, value) { for (const cb of (widget.signals[signature]||[]).slice()) cb(value); }
+  g.signalStack=[];g.scrollAttachments=[];g.destructiveReplacements=[];g.activeSenderDisposals=[];g.widgetDisconnections=0;
+  function contains(widget,ancestor){for(let current=widget;current;current=current.parent)if(current===ancestor)return true;return false;}
+  function emit(widget, signature, value) { g.signalStack.push({widget,signature});try{for (const cb of (widget.signals[signature]||[]).slice()) cb(value);}finally{g.signalStack.pop();} }
   function Font(original) { this.pointSize=original&&original.pointSize||10;this.family=original&&original.family||'System Sans';this.bold=!!(original&&original.bold); }
   Font.prototype.families=function(){return g.families.slice();};
   Font.prototype.size=function(text){return {width:String(text).length*7,height:16};};
   function Widget(parent,kind='DzWidget') { this.kind=kind;this.parent=parent||null;this.font=new Font();this.enabled=true;this.signals={};const owner=this;this.native={setStyleSheet(css){this.styleSheet=css;},setFocus(){g.focusedWidget=owner;}};g.widgets.push(this); }
-  Widget.prototype.getWidget=function(){return this.native;};Widget.prototype.deleteLater=function(){this.deleted=true;};
+  Widget.prototype.getWidget=function(){return this.native;};Widget.prototype.deleteLater=function(){for(const frame of g.signalStack)if(contains(frame.widget,this))g.activeSenderDisposals.push({widget:this,sender:frame.widget,signature:frame.signature});this.deleted=true;};
+  Object.defineProperty(Widget.prototype,'visible',{get(){return this._visible!==false;},set(){throw Error('DzWidget visibility must use documented show/hide');}});
+  Widget.prototype.show=function(){this._visible=true;};Widget.prototype.hide=function(){this._visible=false;};
   function inherit(ctor) { ctor.prototype=Object.create(Widget.prototype);ctor.prototype.constructor=ctor; }
   function DzWidget(parent) {Widget.call(this,parent);} inherit(DzWidget);
   function DzLabel(parent) {Widget.call(this,parent,'DzLabel');this.text='';}inherit(DzLabel);DzLabel.PlainText=0;DzLabel.AlignHCenter=4;
@@ -36,7 +40,7 @@ function environment(options={}) {
   DzListBox.prototype.setSelected=function(index,on){if(index<0||index>=this.items.length)return;if(on){this.currentItem=index;this.selectedIndex=index;emit(this,'selectionChanged(int)',index);}else if(this.selectedIndex===index){this.selectedIndex=-1;emit(this,'selectionChanged(int)',-1);}};
   function DzTextEdit(parent) {Widget.call(this,parent,'DzTextEdit');this.plainText='';}inherit(DzTextEdit);
   function DzScrollArea(parent){Widget.call(this,parent,'DzScrollArea');}inherit(DzScrollArea);
-  DzScrollArea.prototype.setWidget=function(widget){if(this.widget)this.widget.deleteLater();this.widget=widget;};
+  DzScrollArea.prototype.setWidget=function(widget){g.scrollAttachments.push({scroll:this,widget,insideSignal:g.signalStack.length>0});if(this.widget){g.destructiveReplacements.push({scroll:this,oldWidget:this.widget,insideSignal:g.signalStack.length>0});this.widget.deleteLater();}this.widget=widget;};
   DzScrollArea.prototype.ensureWidgetVisible=function(widget,xmargin,ymargin){assert.equal(xmargin,8);assert.equal(ymargin,8);(this.visibilityRequests||(this.visibilityRequests=[])).push(widget);};
   function Layout(parent) {this.parent=parent;this.children=[];parent.wm2TestLayout=this;}Layout.prototype.addWidget=function(widget,stretch){this.children.push({widget,stretch});};
   Layout.prototype.addStretch=function(stretch){this.children.push({stretch});};
@@ -71,7 +75,7 @@ function environment(options={}) {
   const Scene = new Proxy(sceneTarget,{get(target,key){if(key in target)return target[key];g.sceneWrites++;throw new Error('Forbidden Scene call '+String(key));}});
   const allowedSignals={DzComboBox:['currentIndexChanged(int)'],DzLineEdit:['textChanged(const QString&)'],DzListBox:['selectionChanged(int)'],DzPushButton:['clicked()'],DzCheckBox:['toggled(bool)'],Scene:['nodeSelectionListChanged()']};
   function connect(widget,signature,cb){assert((allowedSignals[widget.kind]||[]).includes(signature),'Undocumented mock signal '+widget.kind+'.'+signature);(widget.signals[signature]||(widget.signals[signature]=[])).push(cb);}
-  function disconnect(widget,signature,cb){assert.equal(widget,Scene);const list=widget.signals[signature]||[],index=list.indexOf(cb);assert(index>=0);list.splice(index,1);g.disconnected++;}
+  function disconnect(widget,signature,cb){const list=widget.signals[signature]||[],index=list.indexOf(cb);assert(index>=0);list.splice(index,1);if(widget===Scene)g.disconnected++;else g.widgetDisconnections++;}
   g.setSelection=function(nodes){g.selectedNodes=nodes;g.selected=nodes[0]||null;emit(Scene,'nodeSelectionListChanged()');};
   const FileDialog={doFileDialog(...args){g.browseCalls.push(args);return (options.pickedFiles||[]).shift()||'';}};
   const context=vm.createContext({Font,Size,Image,Pixmap,DzDir,DzFile,DzWidget,DzLabel,DzPushButton,DzCheckBox,DzComboBox,DzLineEdit,DzListBox,DzTextEdit,DzScrollArea,DzVBoxLayout:Layout,DzHBoxLayout:Layout,DzBasicDialog,Scene,FileDialog,connect,disconnect});
@@ -92,7 +96,7 @@ function environment(options={}) {
   function button(text){const found=g.widgets.filter(w=>w.kind==='DzPushButton'&&w.text===text);assert.equal(found.length,1,'Button '+text);return found[0];}
   function click(text){const w=button(text);assert(w.enabled,'Clicked disabled button '+text);emit(w,'clicked()');}
   const selectors={one,button,click,modePicker,ruleEditor,editor(){return g.widgets.find(w=>w.wm2EditorRows).wm2EditorRows;},preview(){return one('DzScrollArea').wm2Preview;},kindCombo(){return modeAdapter;},iconCombo(){return g.widgets.find(w=>w.kind==='DzComboBox');},status(){return g.widgets.filter(w=>w.kind==='DzLabel')[2];}};
-  return {g,context,support,model:()=>context.WM2SettingsModel(support,'C:/scratch/Resources','A.png'),...selectors};
+  return {g,context,support,emit,model:()=>context.WM2SettingsModel(support,'C:/scratch/Resources','A.png'),...selectors};
 }
 const rule=(pattern,kind='exactName',icon='A.png')=>({kind,pattern,icon});
 const config=(rules=[],figures=['Custom'])=>({schema:2,iconRules:rules,supportedFigures:figures,protectedChildren:[{"figure":"Genesis9","children":["Genesis9Eyelashes","Genesis9Tear","Genesis9Eyes","Genesis9Mouth","G9EyebrowCards"]},{"figure":"Genesis8_1Female","children":["Genesis8_1FemaleEyelashes","Female 8_1 Tear"]},{"figure":"Genesis8_1Male","children":["Genesis8_1MaleEyelashes","Male 8_1 Tear"]},{"figure":"Genesis8Female","children":["Genesis8FemaleEyelashes"]},{"figure":"Genesis8Male","children":["Genesis8MaleEyelashes"]}]});
@@ -200,7 +204,7 @@ test('Selecting a lower-priority/nonmatching rule never forces its icon onto the
 });
 test('Preview Scene shows selected owner children only and refreshes visual rows on live selection',()=>{
   const f=menuFamily(),foreign={name:'Foreign',getLabel:()=> 'Foreign item'},e=environment({selected:f.skirt,nodes:f.nodes.concat(foreign),pngs:menuPNGs,hostList:true,listOnly:true,config:config()});
-  e.g.steps=[()=>{assert.equal(e.preview().rows.length,1);e.click('Preview Scene');assert.equal(e.preview().title,'My Figure');assert.deepStrictEqual(plain(e.preview().rows.map(r=>r.label)),['10in1 Casual Wardrobe Slit Skirt','Shirt']);const old=e.one('DzScrollArea').widget;e.kindCombo().currentItem=3;e.one('DzLineEdit').text='Skirt';assert(old.deleted);assert.equal(e.preview().rows.length,2);assert.equal(e.preview().rows[0].source,'custom');e.g.setSelection([f.shirt]);assert.equal(e.preview().rows.length,2);e.g.setSelection([]);assert.equal(e.preview().rows.length,0);assert(e.preview().message.includes('Select'));return false;}];e.context.WM2ShowIconRules('C:/scratch/Resources');assert.equal(e.g.saved.length,0);assert.equal(e.g.sceneWrites,0);assert.equal(e.g.disconnected,1);
+  e.g.steps=[()=>{assert.equal(e.preview().rows.length,1);e.click('Preview Scene');assert.equal(e.preview().title,'My Figure');assert.deepStrictEqual(plain(e.preview().rows.map(r=>r.label)),['10in1 Casual Wardrobe Slit Skirt','Shirt']);const old=e.one('DzScrollArea').widget;e.kindCombo().currentItem=3;e.one('DzLineEdit').text='Skirt';assert.equal(e.one('DzScrollArea').widget,old);assert(!old.deleted);assert.equal(e.g.destructiveReplacements.length,0);assert.equal(e.preview().rows.length,2);assert.equal(e.preview().rows[0].source,'custom');e.g.setSelection([f.shirt]);assert.equal(e.preview().rows.length,2);e.g.setSelection([]);assert.equal(e.preview().rows.length,0);assert(e.preview().message.includes('Select'));return false;}];e.context.WM2ShowIconRules('C:/scratch/Resources');assert.equal(e.g.saved.length,0);assert.equal(e.g.sceneWrites,0);assert.equal(e.g.disconnected,1);
 });
 test('Selected figure opens the same picture rows without needing Preview Scene first',()=>{
   const f=menuFamily(),e=environment({selected:f.owner,nodes:f.nodes,pngs:menuPNGs,config:config()});e.g.steps=[()=>{assert.equal(e.preview().title,'My Figure');assert.equal(e.preview().rows.length,2);assert.equal(e.preview().rows[0].icon,'Wearables Manager - Skirt.PNG');return false;}];e.context.WM2ShowIconRules('C:/scratch/Resources');assert.equal(e.g.sceneWrites,0);

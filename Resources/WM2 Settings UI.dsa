@@ -40,6 +40,7 @@ function WM2SettingsSetPlainText(label, text) {
     if (typeof DzLabel.PlainText != "undefined") { label.textFormat = DzLabel.PlainText; label.text = String(text); }
     else label.text = String(text).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 }
+function WM2SettingsSetVisible(widget, visible) { if(visible)widget.show();else widget.hide(); }
 function WM2SettingsPlainLabel(parent, text) {
     var label = new DzLabel(parent);
     label.wordWrap = true;WM2SettingsSetPlainText(label,text);
@@ -121,10 +122,16 @@ function WM2SettingsRow(parent, layout) {
     rowLayout.margin = 0; rowLayout.spacing = WM2SettingsMetrics(row).spacing;
     layout.addWidget(row); return {widget:row,layout:rowLayout};
 }
-function WM2SettingsEditorRows(parent, layout, resourcePath, emptyText, onSelect, options) {
+function WM2SettingsEditorRows(parent, layout, resourcePath, emptyText, onSelect) {
     var scroll=new DzScrollArea(parent),metrics=WM2SettingsMetrics(scroll);
     scroll.widgetResizable=true;scroll.minHeight=Math.max(180,metrics.listHeight);layout.addWidget(scroll,1);
-    var editor={scroll:scroll,entries:[],rows:[],currentItem:-1};scroll.wm2EditorRows=editor;
+    var editor={scroll:scroll,entries:[],rows:[],pool:[],currentItem:-1,notifying:false,dispatching:false};scroll.wm2EditorRows=editor;
+    // Attach one body for the dialog lifetime. setWidget destroys prior contents,
+    // so selection callbacks must update existing widgets instead of replacing them.
+    var body=new DzWidget(scroll),bodyLayout=new DzVBoxLayout(body);bodyLayout.margin=metrics.margin;bodyLayout.spacing=metrics.spacing;
+    var empty=WM2SettingsPlainLabel(body,emptyText);bodyLayout.addWidget(empty);
+    var rowsBody=new DzWidget(body),rowsLayout=new DzVBoxLayout(rowsBody);rowsLayout.margin=0;rowsLayout.spacing=metrics.spacing;bodyLayout.addWidget(rowsBody);
+    if(typeof bodyLayout.addStretch==="function")bodyLayout.addStretch(1);scroll.setWidget(body);
     function reveal(row,focus) {
         try {if(typeof scroll.ensureWidgetVisible==="function")scroll.ensureWidgetVisible(row.widget,8,8);}catch(e){}
         if(focus)try {var native=row.button.getWidget();if(typeof native.setFocus==="function")native.setFocus();}catch(e){}
@@ -136,44 +143,39 @@ function WM2SettingsEditorRows(parent, layout, resourcePath, emptyText, onSelect
             var row=editor.rows[i],selected=i===index;row.selected=selected;
             WM2SettingsCSS(row.widget,"QWidget#WM2EditorRow"+i+" { background-color:"+(selected?"#293c49":"transparent")+"; border:1px solid "+(selected?"#87c9ff":"#777777")+"; border-radius:4px; }");
             WM2SettingsCSS(row.label,"QLabel { "+(selected?"color:#87c9ff; ":"")+"border:0; background:transparent; }");
-            if(row.detailLabel)WM2SettingsCSS(row.detailLabel,"QLabel { "+(selected?"color:#dddddd; ":"")+"border:0; background:transparent; }");
+            WM2SettingsCSS(row.detailLabel,"QLabel { "+(selected?"color:#dddddd; ":"")+"border:0; background:transparent; }");
         }
         if(index>=0)reveal(editor.rows[index],focus===true);
-        if(typeof onSelect==="function")onSelect(index);
+        if(typeof onSelect==="function"&&!editor.notifying){editor.notifying=true;try{onSelect(index);}finally{editor.notifying=false;}}
     };
+    function createRow(index) {
+        var row=WM2SettingsRow(rowsBody,rowsLayout);row.layout.margin=8;
+        try{row.widget.getWidget().objectName="WM2EditorRow"+index;}catch(e){}
+        var button=WM2SettingsButton(row.widget,">",resourcePath,"Wearables Manager - Arrow Right.png");
+        try{button.getWidget().autoDefault=false;}catch(e){}
+        try{if(button.pixmap&&!button.pixmap.isNull())button.text="";}catch(e){}button.minWidth=34;button.wm2RowIndex=index;row.layout.addWidget(button);
+        var column=new DzWidget(row.widget),textLayout=new DzVBoxLayout(column);textLayout.margin=0;textLayout.spacing=2;
+        var label=WM2SettingsPlainLabel(column,"");label.font=WM2SettingsFont(label,true);textLayout.addWidget(label);
+        var detail=WM2SettingsPlainLabel(column,"");textLayout.addWidget(detail);row.layout.addWidget(column,1);
+        var result={widget:row.widget,button:button,label:label,detailLabel:detail,selected:false};
+        connect(button,"clicked()",function(){
+            if(editor.dispatching||!button.enabled||editor.rows[index]!==result)return;
+            editor.dispatching=true;try{editor.select(index,true);}finally{editor.dispatching=false;}
+        });
+        return result;
+    }
     editor.populate=function(entries,selectedName,focus) {
         if(typeof selectedName==="undefined")selectedName=editor.currentItem>=0?editor.entries[editor.currentItem].name:null;
-        editor.entries=entries.slice(0);editor.rows=[];editor.currentItem=-1;
-        var body=new DzWidget(scroll),bodyLayout=new DzVBoxLayout(body);bodyLayout.margin=metrics.margin;bodyLayout.spacing=metrics.spacing;
+        editor.entries=entries.slice(0);editor.rows=[];editor.currentItem=-1;WM2SettingsSetVisible(empty,entries.length===0);
         for(var i=0;i<editor.entries.length;i++) {
-            var entry=editor.entries[i],row=WM2SettingsRow(body,bodyLayout);row.layout.margin=8;
-            try{row.widget.getWidget().objectName="WM2EditorRow"+i;}catch(e){}
-            var checkBox=null;
-            if(options&&options.checkEnabled){
-                checkBox=new DzCheckBox(row.widget);checkBox.text="";checkBox.tristate=false;checkBox.checked=entry.enabled!==false;
-                checkBox.enabled=options.editable!==false;checkBox.toolTip="Enable rule";checkBox.wm2RuleIndex=i;row.layout.addWidget(checkBox);
-            }
-            var button=WM2SettingsButton(row.widget,">",resourcePath,"Wearables Manager - Arrow Right.png");
-            try{button.getWidget().autoDefault=false;}catch(e){}
-            try{if(button.pixmap&&!button.pixmap.isNull())button.text="";}catch(e){}button.minWidth=34;button.toolTip="Select "+entry.name;
-            button.wm2RowName=entry.name;button.wm2RowIndex=i;row.layout.addWidget(button);
-            var textColumn=new DzWidget(row.widget),textLayout=new DzVBoxLayout(textColumn);textLayout.margin=0;textLayout.spacing=2;
-            var label=WM2SettingsPlainLabel(textColumn,entry.text);label.font=WM2SettingsFont(label,true);textLayout.addWidget(label);
-            var detailLabel=null;if(entry.detail){detailLabel=WM2SettingsPlainLabel(textColumn,entry.detail);textLayout.addWidget(detailLabel);}
-            row.layout.addWidget(textColumn,1);
-            editor.rows.push({widget:row.widget,button:button,label:label,detailLabel:detailLabel,checkBox:checkBox,selected:false});
-            (function(index,name,selector){connect(selector,"clicked()",function(){
-                // A queued click from content replaced after Add/Remove cannot select a different row.
-                if(editor.rows[index]&&editor.rows[index].button===selector&&editor.entries[index].name===name)editor.select(index,true);
-            });})(i,entry.name,button);
-            if(checkBox)(function(index,name,control){connect(control,"toggled(bool)",function(enabled){
-                if(editor.rows[index]&&editor.rows[index].checkBox===control&&editor.entries[index].name===name&&typeof options.onEnabled==="function")options.onEnabled(index,enabled===true);
-            });})(i,entry.name,checkBox);
+            var entry=editor.entries[i],row=editor.pool[i];if(!row){row=createRow(i);editor.pool.push(row);}
+            WM2SettingsSetVisible(row.widget,true);row.button.enabled=true;row.button.wm2RowName=entry.name;row.button.toolTip="Select "+entry.name;
+            WM2SettingsSetPlainText(row.label,entry.text);WM2SettingsSetPlainText(row.detailLabel,entry.detail||"");WM2SettingsSetVisible(row.detailLabel,!!entry.detail);
+            editor.rows.push(row);
         }
-        if(!editor.entries.length)bodyLayout.addWidget(WM2SettingsPlainLabel(body,emptyText));
-        if(typeof bodyLayout.addStretch==="function")bodyLayout.addStretch(1);
-        scroll.setWidget(body);var selected=-1;
-        for(var j=0;j<editor.entries.length;j++)if(editor.entries[j].name===selectedName){selected=j;break;}
+        // Reuse surplus widgets after Remove; never dispose an active signal sender.
+        for(var j=editor.entries.length;j<editor.pool.length;j++){WM2SettingsSetVisible(editor.pool[j].widget,false);editor.pool[j].button.enabled=false;editor.pool[j].button.wm2RowName=null;editor.pool[j].selected=false;}
+        var selected=-1;for(var k=0;k<editor.entries.length;k++)if(editor.entries[k].name===selectedName){selected=k;break;}
         editor.select(selected,focus===true);
     };
     return editor;
@@ -218,6 +220,7 @@ function WM2SettingsModePicker(parent, layout, resourcePath, changed) {
         button.wm2ModeNormalFilename=filename;button.wm2ModeOnFilename=onFilename;button.wm2ModeFallback=fallback[i];
         button.wm2ModeNormalPixmap=null;try{if(button.pixmap&&!button.pixmap.isNull())button.wm2ModeNormalPixmap=button.pixmap;}catch(e){}
         button.wm2ModeOnPixmap=WM2SettingsLoadPixmap(resourcePath,onFilename,32,false);
+        button.sizedFromIcon=true;
         try{button.getWidget().iconSize=new Size(32,32);}catch(e){}
         try{if(button.pixmap&&!button.pixmap.isNull())button.text="";}catch(e){}
         button.minWidth=44;button.minHeight=44;button.maxWidth=44;button.maxHeight=44;if(typeof button.setCheckable==="function")button.setCheckable(true);else try{button.getWidget().checkable=true;}catch(e){}try{button.getWidget().autoDefault=false;}catch(e){}button.wm2ModeKind=kinds[i];button.toolTip=WM2SettingsKindLabel(kinds[i]);row.layout.addWidget(button);picker.buttons.push(button);
@@ -249,12 +252,6 @@ function WM2SettingsModel(support, resourcePath, firstIcon) {
     model.dirty = function () { return JSON.stringify(model.form)!==model.baseline; };
     model.setForm = function (form) { model.form={kind:String(form.kind),pattern:String(form.pattern),icon:String(form.icon)}; };
     model.ruleFromForm=function(index){var rule=support.clone(model.form),existing=model.config.iconRules[index];if(existing&&Object.prototype.hasOwnProperty.call(existing,"enabled"))rule.enabled=existing.enabled;return rule;};
-    model.setEnabled=function(index,enabled){
-        if(!model.editable)return response(false,"These settings are read-only.");
-        if(typeof enabled!=="boolean"||index<0||index>=model.config.iconRules.length||Math.floor(index)!==index)return response(false,"Select a rule to enable or disable.");
-        var next=support.clone(model.config);next.iconRules[index].enabled=enabled;
-        var checked=WM2SettingsValidate(support,next);if(!checked.ok)return checked;model.config=support.clone(checked.config);return response(true);
-    };
     model.commit = function (asNew) {
         if (!model.editable) return response(false,"These settings are read-only: "+model.message);
         if (WM2SettingsIsLegacyKind(model.form.kind) || (!asNew && model.active>=0 && WM2SettingsIsLegacyKind(model.config.iconRules[model.active].kind))) return response(false,"Legacy prefix rules are preserved read-only. Use Clear Draft to create an exact or word rule.");
@@ -305,38 +302,55 @@ function WM2SettingsModel(support, resourcePath, firstIcon) {
     model.clear();return model;
 }
 function WM2SettingsRenderMenuPreview(scroll,result,onSelect,onOwner,resourcePath) {
-    var body=new DzWidget(scroll),layout=new DzVBoxLayout(body),metrics=WM2SettingsMetrics(body);
-    layout.margin=metrics.margin;layout.spacing=metrics.spacing;
-    if(result.title)layout.addWidget(WM2SettingsHeading(body,result.title==="Selected item"?"Selected":result.title,"#87c9ff"));
-    if(result.canReturnToOwner&&result.owner&&typeof onOwner==="function"){
-        var back=WM2SettingsButton(body,"Back to "+WM2Support.iconNodeLabel(result.owner),resourcePath,"Wearables Manager - Arrow Left.png");
-        back.wm2OwnerNode=result.owner;layout.addWidget(back);
-        connect(back,"clicked()",function(){onOwner(result.owner);});
+    var state=scroll.wm2PreviewWidgets;
+    if(!state){
+        var body=new DzWidget(scroll),layout=new DzVBoxLayout(body),metrics=WM2SettingsMetrics(body);layout.margin=metrics.margin;layout.spacing=metrics.spacing;
+        state={body:body,pool:[],dispatching:false};scroll.wm2PreviewWidgets=state;
+        state.heading=WM2SettingsHeading(body,"","#87c9ff");layout.addWidget(state.heading);
+        state.back=WM2SettingsButton(body,"",resourcePath,"Wearables Manager - Arrow Left.png");layout.addWidget(state.back);
+        state.message=WM2SettingsPlainLabel(body,"");layout.addWidget(state.message);
+        state.rowsBody=new DzWidget(body);state.rowsLayout=new DzVBoxLayout(state.rowsBody);state.rowsLayout.margin=0;state.rowsLayout.spacing=metrics.spacing;layout.addWidget(state.rowsBody);
+        if(typeof layout.addStretch==="function")layout.addStretch(1);
+        connect(state.back,"clicked()",function(){
+            if(state.dispatching||!state.back.enabled||!state.back.wm2OwnerNode||typeof state.onOwner!=="function")return;
+            state.dispatching=true;try{state.onOwner(state.back.wm2OwnerNode);}finally{state.dispatching=false;}
+        });
+        // Pictures and Back can refresh this preview from their own callbacks.
+        // Keep its body and controls alive until the dialog closes.
+        scroll.setWidget(body);
     }
-    if(result.message)layout.addWidget(WM2SettingsPlainLabel(body,result.message));
-    var sourceRows=result.rows||[],rows=[],stored=[],section="";
-    for(var r=0;r<sourceRows.length;r++)(sourceRows[r].isInGroup?stored:rows).push(sourceRows[r]);
-    rows=rows.concat(stored);
+    state.onSelect=onSelect;state.onOwner=onOwner;
+    WM2SettingsSetPlainText(state.heading,result.title==="Selected item"?"Selected":result.title||"");WM2SettingsSetVisible(state.heading,!!result.title);
+    var hasBack=!!(result.canReturnToOwner&&result.owner&&typeof onOwner==="function");
+    WM2SettingsSetVisible(state.back,hasBack);state.back.enabled=hasBack;state.back.wm2OwnerNode=hasBack?result.owner:null;
+    state.back.text=hasBack?"Back to "+WM2Support.iconNodeLabel(result.owner):"";
+    WM2SettingsSetPlainText(state.message,result.message||"");WM2SettingsSetVisible(state.message,!!result.message);
+    var source=result.rows||[],rows=[],stored=[],section="";for(var r=0;r<source.length;r++)(source[r].isInGroup?stored:rows).push(source[r]);rows=rows.concat(stored);
+    function createRow(){
+        var widget=new DzWidget(state.rowsBody),outer=new DzVBoxLayout(widget);outer.margin=0;outer.spacing=WM2SettingsMetrics(widget).spacing;state.rowsLayout.addWidget(widget);
+        var heading=WM2SettingsHeading(widget,"","#87c9ff");outer.addWidget(heading);
+        var line=WM2SettingsRow(widget,outer),image=new DzPushButton(line.widget);image.text="";image.buttonStyle=DzPushButton.BTool;image.sizedFromIcon=true;image.minWidth=91;image.minHeight=91;line.layout.addWidget(image);
+        var column=new DzWidget(line.widget),textLayout=new DzVBoxLayout(column);textLayout.margin=0;textLayout.spacing=2;
+        var label=WM2SettingsPlainLabel(column,"");label.font=WM2SettingsFont(label,false);label.font.bold=true;textLayout.addWidget(label);
+        var caption=WM2SettingsPlainLabel(column,"");textLayout.addWidget(caption);line.layout.addWidget(column,1);
+        var unavailable=WM2SettingsPlainLabel(line.widget,"Icon unavailable");line.layout.addWidget(unavailable);
+        var row={widget:widget,heading:heading,image:image,label:label,caption:caption,unavailable:unavailable,layout:line.layout,active:false,item:null};
+        connect(image,"clicked()",function(){
+            if(state.dispatching||!row.active||!image.enabled||!row.item||typeof state.onSelect!=="function")return;
+            state.dispatching=true;try{state.onSelect(row.item.node);}finally{state.dispatching=false;}
+        });
+        return row;
+    }
     for(var i=0;i<rows.length;i++){
-        var item=rows[i],next=item.isInGroup?"Stored":"On Figure";
-        if(result.title!=="Selected item"&&next!==section){layout.addWidget(WM2SettingsHeading(body,next,"#87c9ff"));section=next;}
-        var row=WM2SettingsRow(body,layout),image=new DzPushButton(row.widget);
-        image.text="";image.buttonStyle=DzPushButton.BTool;image.sizedFromIcon=true;image.minWidth=91;image.minHeight=91;
-        image.toolTip=item.usable?item.label:"Icon unavailable";
-        WM2Support.setMenuPixmap(image,item.pixmap);row.layout.addWidget(image);
-        var textColumn=new DzWidget(row.widget),textLayout=new DzVBoxLayout(textColumn);textLayout.margin=0;textLayout.spacing=2;
-        var label=WM2SettingsPlainLabel(textColumn,(item.parentLabel?item.parentLabel+" > ":"")+item.label);
-        label.font=WM2SettingsFont(label,false);label.font.bold=true;textLayout.addWidget(label);
-        if(item.assetCaption)textLayout.addWidget(WM2SettingsPlainLabel(textColumn,item.assetCaption));
-        row.layout.addWidget(textColumn,1);
-        if(!item.usable)row.layout.addWidget(WM2SettingsPlainLabel(row.widget,"Icon unavailable"));
+        var item=rows[i],next=item.isInGroup?"Stored":"On Figure",row=state.pool[i];if(!row){row=createRow();state.pool.push(row);}
+        row.active=true;row.item=item;WM2SettingsSetVisible(row.widget,true);row.image.enabled=true;row.image.wm2EditingNode=item.node;row.image.toolTip=item.usable?item.label:"Icon unavailable";
+        WM2SettingsSetVisible(row.heading,result.title!=="Selected item"&&next!==section);WM2SettingsSetPlainText(row.heading,next);section=next;
+        WM2Support.setMenuPixmap(row.image,item.pixmap);
+        WM2SettingsSetPlainText(row.label,(item.parentLabel?item.parentLabel+" > ":"")+item.label);WM2SettingsSetPlainText(row.caption,item.assetCaption||"");WM2SettingsSetVisible(row.caption,!!item.assetCaption);WM2SettingsSetVisible(row.unavailable,!item.usable);
         row.layout.margin=Math.min(10,item.depth)*16;
-        image.wm2EditingNode=item.node;
-        if(typeof onSelect==="function"){
-            (function(node,button){connect(button,"clicked()",function(){onSelect(node);});})(item.node,image);
-        }
     }
-    scroll.setWidget(body);scroll.wm2Preview=result;
+    for(var j=rows.length;j<state.pool.length;j++){var spare=state.pool[j];spare.active=false;spare.item=null;WM2SettingsSetVisible(spare.widget,false);spare.image.enabled=false;spare.image.wm2EditingNode=null;}
+    scroll.wm2Preview=result;
 }
 function WM2SettingsPromptIconName(parent, currentName) {
     var dialog=new DzBasicDialog();dialog.caption="Choose another icon filename";
@@ -353,7 +367,7 @@ function WM2ShowIconRules(resourcePath,getPreviewContext) {
     var model=WM2SettingsModel(support,resourcePath,icons.length?icons[0]:""),ui=WM2SettingsDialog("Icon rules for no active item",resourcePath),dialog=ui.dialog,content=ui.content,layout=ui.layout,metrics=ui.metrics;
     var heading=WM2SettingsHeading(content,"Icon rules for no active item","#87c9ff");layout.addWidget(heading);
     var boundaries=WM2SettingsPlainLabel(content,"Words match literal text, ignoring case. Boundaries are start/end, whitespace, digits, dashes, _ or ! outside the entire pattern.");boundaries.font=WM2SettingsFont(boundaries,true);layout.addWidget(boundaries);
-    var status=WM2SettingsPlainLabel(content,""),list=WM2SettingsEditorRows(content,layout,resourcePath,"No icon rules.",selectRule,{checkEnabled:true,editable:model.editable,onEnabled:toggleRuleEnabled});
+    var status=WM2SettingsPlainLabel(content,""),list=WM2SettingsEditorRows(content,layout,resourcePath,"No icon rules.",selectRule);
     list.scroll.wm2IconRules=true;
     var kind=WM2SettingsModePicker(content,layout,resourcePath,edited),kinds=kind.kinds;
     var patternRow=WM2SettingsRow(content,layout),pattern=new DzLineEdit(patternRow.widget);pattern.minHeight=metrics.fieldHeight;patternRow.layout.addWidget(WM2SettingsPlainLabel(patternRow.widget,"Pattern"));patternRow.layout.addWidget(pattern,1);
@@ -414,7 +428,6 @@ function WM2ShowIconRules(resourcePath,getPreviewContext) {
     function edited(){if(populating)return;capture();renderPreview(null,true);}
     connect(pattern,"textChanged(const QString&)",edited);connect(icon,"currentIndexChanged(int)",edited);
     function selectRule(index){if(populating)return;capture();var result=model.select(Number(index));if(!result.ok){populating=true;try{list.select(model.active,false);}finally{populating=false;}say(result.message);return;}populate();if(model.active>=0){populating=true;try{list.select(model.active,true);}finally{populating=false;}}}
-    function toggleRuleEnabled(index,enabled){if(populating)return;capture();var keepWhole=previewWholeFigure;try{var result=model.setEnabled(index,enabled);if(!result.ok){say(result.message);populate(keepWhole,true);return;}populate(keepWhole,true);if(list.rows[index])try{list.rows[index].checkBox.getWidget().setFocus();list.scroll.ensureWidgetVisible(list.rows[index].widget,8,8);}catch(e){}say(enabled?"Rule enabled in this draft.":"Rule disabled in this draft.");}catch(e){say(String(e));}}
     connect(clearDraft,"clicked()",function(){perform(model.resetDraft,false);say("Form cleared; no rule was added.");});
     connect(add,"clicked()",function(){perform(function(){return model.commit(true);},true);});connect(update,"clicked()",function(){perform(function(){return model.active<0?{ok:false,message:"Select a rule to update."}:model.commit(false);},true);});connect(remove,"clicked()",function(){perform(model.remove,false);});
     connect(up,"clicked()",function(){perform(function(){return model.move(-1);},false);});connect(down,"clicked()",function(){perform(function(){return model.move(1);},false);});
@@ -435,10 +448,10 @@ function WM2ShowIconRules(resourcePath,getPreviewContext) {
         var matched=support.matchIcon(model.config.iconRules,target);
         if(matched.matched){var selectedRule=model.select(matched.ruleIndex);if(!selectedRule.ok){say(selectedRule.message);return;}}
         else {model.clear();model.setForm({kind:"exactLabel",pattern:support.iconNodeLabel(target),icon:model.form.icon});model.baseline=JSON.stringify(model.form);}
-        var keepWhole=wholeFigure===true?true:previewWholeFigure;populate();renderPreview(keepWhole,false);
+        var keepWhole=wholeFigure===true?true:previewWholeFigure;populate(keepWhole,false);
         say("Editing "+support.iconNodeLabel(target)+". Prior valid edits remain in the draft list; Save applies all changes.");
     }catch(e){say("Editing target could not be changed: "+String(e));}}
-    function useSelected(field){try{var current=refreshSelection();if(!current.ok){say(current.message);return;}var text=field==="asset"?support.iconNodeAssetId(current.node):field==="label"?support.iconNodeLabel(current.node):support.iconNodeName(current.node);if(!text){say("The active item has no "+(field==="asset"?"assetId":field)+" value.");return;}capture();model.setForm({kind:model.form.kind,pattern:text,icon:model.form.icon});populate();renderPreview(false,true);say("Selected text copied to Pattern; Match mode kept. Add Rule, Update Rule or Save applies the changed form.");}catch(e){say(String(e));}}
+    function useSelected(field){try{var current=refreshSelection();if(!current.ok){say(current.message);return;}var text=field==="asset"?support.iconNodeAssetId(current.node):field==="label"?support.iconNodeLabel(current.node):support.iconNodeName(current.node);if(!text){say("The active item has no "+(field==="asset"?"assetId":field)+" value.");return;}capture();model.setForm({kind:model.form.kind,pattern:text,icon:model.form.icon});populate(false,true);say("Selected text copied to Pattern; Match mode kept. Add Rule, Update Rule or Save applies the changed form.");}catch(e){say(String(e));}}
     connect(useName,"clicked()",function(){useSelected("name");});connect(useLabel,"clicked()",function(){useSelected("label");});connect(useAssetId,"clicked()",function(){useSelected("asset");});
     connect(browse,"clicked()",function(){try{
         var selectedPath=String(FileDialog.doFileDialog(true,"Choose PNG Icon",resourcePath,"PNG Images (*.png *.PNG)",0,dialog));if(!selectedPath)return;
