@@ -72,6 +72,90 @@ for(const file of ['Wearables Manager Full.dsa','Wearables Manager Menu.dsa']) {
     if(!integrated){const untouchedSource=source.slice(source.indexOf('function WearablesIconsClass('),source.indexOf('function TagImageManagerClass('));let changed=overlay.source.slice(overlay.source.indexOf('function WearablesIconsClass('),overlay.source.indexOf('function TagImageManagerClass('));for(const op of overlay.operations.slice().reverse())changed=changed.replace(op.newText,op.oldText);assert.equal(changed,untouchedSource);}
   });
 }
+
+// Word matching and retained legacy semantics use the actual shared module.
+for(const kind of ['nameWord','labelWord']) {
+  const item=value=>kind==='nameWord'?node(value,'Other'):node('Other',value);
+  const matches=value=>support.matchIcon([rule(kind,'Duvet')],item(value)).matched;
+  test(kind+': user examples and two required boundaries',()=>{
+    for(const value of ['Duvet','dForce Duvet','Duvet2','2Duvet','Duvet_cover','!Duvet!'])assert.equal(matches(value),true,value);
+    for(const value of ['DuvetCover','CoverDuvet','CoverDuvetCover',' DuvetCover','CoverDuvet '])assert.equal(matches(value),false,value);
+  });
+  for(const boundary of [' ','\t','\r','\n','\v','\f','\u00a0','\u2028','\u2029','-','_','!','\u2010','\u2011','\u2012','\u2013','\u2014','\u2015',...'0123456789']) {
+    const separator=boundary;
+    test(kind+': boundary '+JSON.stringify(separator)+' is allowed independently on each edge',()=>{
+      for(const value of [separator+'Duvet','Duvet'+separator,separator+'Duvet'+separator])assert.equal(matches(value),true,JSON.stringify(value));
+      assert.equal(matches('xDuvet'+separator),false);assert.equal(matches(separator+'Duvetx'),false);
+    });
+  }
+  test(kind+': unlisted punctuation and letters are not boundaries',()=>{
+    for(const separator of ['x','X','\u00e9','\u4e2d','.',',',':',';','/','\\','(',')','[',']','+','?','@']){
+      assert.equal(matches(separator+'Duvet'),false,separator+'Duvet');assert.equal(matches('Duvet'+separator),false,'Duvet'+separator);
+    }
+  });
+  test(kind+': scans past an embedded first occurrence and supports overlaps',()=>{
+    assert(matches('CoverDuvet Duvet!'));assert(matches('DuvetCover !Duvet'));assert(!matches('CoverDuvet DuvetCover'));
+    assert(support.matchIcon([rule(kind,'a-a')],item('Xa-a-a')).matched);
+  });
+  test(kind+': case and whitespace stay literal',()=>{
+    assert.equal(matches('duvet'),false);assert.equal(support.matchIcon([rule(kind,' Duvet ')],item('! Duvet !')).matched,true);
+    assert.equal(support.matchIcon([rule(kind,' Duvet ')],item('Duvet')).matched,false);
+    assert.equal(support.matchIcon([rule(kind,'Duvet cover')],item('!Duvet cover!')).matched,true);
+  });
+  test(kind+': regex metacharacters and backslashes are literal text',()=>{
+    for(const pattern of ['Duvet.*','[Duvet]','(Duvet)','Duvet+?','^Duvet$','Duvet|Cover','Duvet\\Cover','.*','[]()+*?^$|.\\']){
+      assert(support.matchIcon([rule(kind,pattern)],item('!'+pattern+'!')).matched,pattern);
+      assert.equal(support.matchIcon([rule(kind,pattern)],item('DuvetCover')).matched,false,pattern);
+    }
+  });
+  test(kind+': only its selected field participates',()=>{
+    assert.equal(support.matchIcon([rule(kind,'Duvet')],kind==='nameWord'?node('Other','Duvet'):node('Duvet','Other')).matched,false);
+  });
+}
+test('word helper refuses empty/non-string values and does not coerce objects',()=>{
+  for(const [value,pattern]of [[null,'Duvet'],['Duvet',null],[123,'Duvet'],['Duvet',123],['Duvet',''],[{toString(){throw Error('coerced');}},'Duvet']])assert.equal(support.containsIconWord(value,pattern),false);
+});
+test('exact name then exact label outrank matching words regardless of order',()=>{
+  const rules=[rule('labelWord','Duvet','lw.png'),rule('nameWord','Duvet','nw.png'),rule('exactLabel','dForce Duvet','el.png'),rule('exactName','Duvet','en.png')];
+  assert.equal(support.matchIcon(rules,node('Duvet','dForce Duvet (2)')).icon,'en.png');
+  assert.equal(support.matchIcon(rules.slice(0,3),node('Duvet','dForce Duvet (2)')).icon,'el.png');
+});
+test('longer word patterns win across name/label fields',()=>{
+  assert.equal(support.matchIcon([rule('labelWord','Coat','short.png'),rule('nameWord','Long Coat','long.png')],node('Long Coat','Coat')).icon,'long.png');
+  assert.equal(support.matchIcon([rule('nameWord','Coat','short.png'),rule('labelWord','Long Coat','long.png')],node('Coat','Long Coat')).icon,'long.png');
+});
+test('equal word lengths prefer label before name in either row order',()=>{
+  const rules=[rule('nameWord','Duvet','name.png'),rule('labelWord','Cover','label.png')];
+  for(const rows of [rules,rules.slice().reverse()])assert.equal(support.matchIcon(rows,node('Duvet','Cover')).icon,'label.png');
+});
+test('same-field equal-length word ties keep the earlier row',()=>{
+  const rules=[rule('labelWord','Duvet','one.png'),rule('labelWord','Cover','two.png')];
+  assert.equal(support.matchIcon(rules,node('Other','Duvet Cover')).icon,'one.png');
+  assert.equal(support.matchIcon(rules.slice().reverse(),node('Other','Duvet Cover')).icon,'two.png');
+});
+test('word rules outrank legacy prefixes without changing prefix-only behavior',()=>{
+  const legacy=[rule('namePrefix','DuvetLong','name.png'),rule('labelPrefix','dForce Duvet','label.png')],n=node('DuvetLongCover','dForce Duvet');
+  assert.equal(support.matchIcon(legacy,n).icon,'label.png');
+  for(const rows of [legacy.concat(rule('labelWord','Duvet','word.png')),[rule('labelWord','Duvet','word.png')].concat(legacy)])assert.equal(support.matchIcon(rows,n).icon,'word.png');
+  assert.equal(support.matchIcon([rule('labelPrefix','Duvet')],node('Other','DuvetCover')).matched,true);
+  assert.equal(support.matchIcon([rule('labelWord','Duvet')],node('Other','DuvetCover')).matched,false);
+});
+test('word labels preserve suffix literals while exact-label normalization remains unchanged',()=>{
+  const n=node('Other','Hair (1)');assert.equal(support.matchIcon([rule('labelWord','Hair (2)')],n).matched,false);
+  assert.equal(support.matchIcon([rule('labelWord','Hair')],n).matched,true);
+  assert.equal(support.matchIcon([rule('exactLabel','Hair (2)')],n).matched,true);
+  assert.equal(support.matchIcon([rule('labelWord','Hair')],node('Other','(Hair)')).matched,false);
+});
+test('word preview matches the runtime result and leaves the node unchanged',()=>{
+  const n=node('dForce Duvet','!Duvet!'),rules=[rule('nameWord','Duvet'),rule('labelWord','Duvet')],before=n.name,result=support.previewIconRules(rules,[n],10);
+  assert.deepStrictEqual(plain(result.rows[0].match),plain(support.matchIcon(rules,n)));assert.equal(n.name,before);assert.equal(result.matched,1);
+});
+for(const file of ['Wearables Manager Full.dsa','Wearables Manager Menu.dsa'])test(file+': shared word matcher selects configured PNG; embedded letters retain automatic icon',()=>{
+  const source=fs.readFileSync(path.join(root,file),'utf8'),a=iconsClass(source,[rule('labelWord','Duvet','custom.png')],['custom.png']);
+  assert.equal(a.icons.GetIconForWearable(node('Camera','dForce Duvet')).path,'/Resources/custom.png');
+  assert.equal(a.icons.GetIconForWearable(node('Camera','DuvetCover')).path,'/Resources/Wearables Manager - Camera.PNG');assert.equal(a.writes.length,0);
+});
+
 const result={status:integrated?'Actual integrated source':'Pure methods and UNAPPLIED actual-source integration overlay',nativeExecuted:false,productSourcesWritten:false,sourceRoot:root,supportSource:supportPath||'wm2-icon-methods.body.js',sourceInventory,cases,passed:cases.length};
 fs.writeFileSync(path.join(root,'.test-output/features-icons.json'),JSON.stringify(result,null,2)+'\n');
 

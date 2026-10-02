@@ -10,10 +10,14 @@ The four rule types compare text literally and are case-sensitive:
 
 - Exact internal name.
 - Exact label, ignoring only a final numbered copy suffix such as `Hair (1)` or `Hair (2)`.
-- Label prefix.
-- Internal-name prefix.
+- Word in internal name.
+- Word in label.
 
-An exact name wins before an exact label. Both win before prefixes. The longest matching prefix wins; equal-length prefixes favor the label rule, then the earlier row. Move Up/Down changes the final row-order tie. Preview Scene shows rule matches for up to 2,000 scene items without changing nodes.
+A word pattern must have an allowed boundary on **both sides**: the start/end of the text, whitespace, a digit `0`–`9`, a hyphen/dash (`-` or Unicode U+2010–U+2015), underscore, or `!`. For example, `Duvet` matches `dForce Duvet`, `Duvet2`, `Duvet_cover` and `!Duvet!`; it does not match `DuvetCover` or `CoverDuvet`. Patterns are literal text, including punctuation; regex characters have no special meaning. Word rules use the original name/label and do not strip copy suffixes.
+
+An exact name wins before an exact label, followed by word rules and then legacy prefixes. The longest matching word pattern wins; equal lengths favor a label rule, then the earlier row. Move Up/Down changes the final row-order tie. Preview Scene uses the same matcher as Full/Menu and shows rule matches for up to 2,000 scene items without changing nodes.
+
+Previously saved name/label prefix rules keep their original matching behavior and are marked **Legacy** in the list and preview. Among legacy prefixes, longer patterns still win, then label before name, then the earlier row. They are not converted into word rules because this would change their meaning. You can move or remove a legacy row; its form is read-only. Use **New Rule** to create a replacement with one of the four current modes. New Rule first commits a valid pending form, and retains an invalid draft for correction. Existing legacy rows are preserved when settings are saved.
 
 Choose an existing PNG in Resources. A missing or unreadable configured icon uses WM2's existing automatic icon choice. Existing automatic mappings remain available.
 
@@ -33,4 +37,4 @@ Save creates or updates `Resources/WM2 Settings.json`. It does not overwrite `Re
 
 ## Validation status
 
-These settings changes have source tests and isolated mocks. DAZ4/DAZ6 native dialog layout, PNG loading and filesystem behavior still need an approved isolated native check. The earlier transfer hotfix remains included. The broader metadata/emissive repair candidate is separate and has not been installed with these settings features.
+These settings changes have source tests and isolated mocks. Native DAZ4/DAZ6 dialog layout, PNG loading and filesystem behavior remain for user runtime verification; these checks do not launch DAZ. The earlier transfer hotfix remains included. The broader metadata/emissive repair candidate is separate and has not been installed with these settings features.

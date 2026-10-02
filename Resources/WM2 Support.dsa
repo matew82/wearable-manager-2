@@ -86,7 +86,7 @@ var WM2Support = (function () {
             if (!denseArray(config.iconRules, MAX_RULES)) return invalid("iconRules must be a dense array with at most " + MAX_RULES + " entries.");
             if (!denseArray(config.supportedFigures, MAX_FIGURES)) return invalid("supportedFigures must be a dense array with at most " + MAX_FIGURES + " entries.");
             var normalized = {schema:1, iconRules:[], supportedFigures:[]};
-            var ruleSeen = {}, nameSeen = {}, kinds = {exactName:1, exactLabel:1, labelPrefix:1, namePrefix:1};
+            var ruleSeen = {}, nameSeen = {}, kinds = {exactName:1, exactLabel:1, nameWord:1, labelWord:1, labelPrefix:1, namePrefix:1};
             for (var i = 0; i < config.iconRules.length; i++) {
                 var rule = config.iconRules[i];
                 if (!object(rule) || !keysExactly(rule, {kind:1, pattern:1, icon:1})) return invalid("Icon rule " + (i + 1) + " must contain only kind, pattern and icon.");
@@ -301,6 +301,19 @@ iconNodeLabel: function (node) {
     return "";
 },
 
+// Literal matching: both edges must be a string edge or an allowed separator.
+containsIconWord: function (value, pattern) {
+    if (typeof value != "string" || typeof pattern != "string" || pattern.length == 0) return false;
+    var offset = 0, index, end;
+    while ((index = value.indexOf(pattern, offset)) >= 0) {
+        end = index + pattern.length;
+        if ((index == 0 || /[\s0-9_!\-\u2010-\u2015]/.test(value.charAt(index - 1))) &&
+            (end == value.length || /[\s0-9_!\-\u2010-\u2015]/.test(value.charAt(end)))) return true;
+        offset = index + 1;
+    }
+    return false;
+},
+
 matchIcon: function (rules, node) {
     var none = {matched:false, icon:null, ruleIndex:-1, kind:null, pattern:null};
     if (!node || !Array.isArray(rules)) return none;
@@ -309,23 +322,30 @@ matchIcon: function (rules, node) {
     for (var i = 0; i < rules.length; i++) {
         var rule = rules[i];
         if (!rule || typeof rule.pattern != "string" || rule.pattern.length == 0 || typeof rule.icon != "string" || rule.icon.length == 0) continue;
-        var rank = 2, length = 0, prefixKindRank = 0, matched = false;
+        var rank = 2, length = 0, fieldRank = 0, matched = false;
         if (rule.kind == "exactName") {
             rank = 0; matched = name == rule.pattern;
         } else if (rule.kind == "exactLabel") {
             rank = 1;
             var pattern = this.normalizeCopyLabel(rule.pattern);
             matched = pattern.length > 0 && exactLabel == pattern;
+        } else if (rule.kind == "labelWord") {
+            length = rule.pattern.length; fieldRank = 0;
+            matched = this.containsIconWord(label, rule.pattern);
+        } else if (rule.kind == "nameWord") {
+            length = rule.pattern.length; fieldRank = 1;
+            matched = this.containsIconWord(name, rule.pattern);
         } else if (rule.kind == "labelPrefix") {
-            length = rule.pattern.length; prefixKindRank = 0;
+            // Legacy rules retain their original literal prefix behavior.
+            rank = 3; length = rule.pattern.length; fieldRank = 0;
             matched = label.indexOf(rule.pattern) == 0;
         } else if (rule.kind == "namePrefix") {
-            length = rule.pattern.length; prefixKindRank = 1;
+            rank = 3; length = rule.pattern.length; fieldRank = 1;
             matched = name.indexOf(rule.pattern) == 0;
         } else continue;
         if (!matched) continue;
-        if (!best || rank < best.rank || (rank == best.rank && rank == 2 && (length > best.length || (length == best.length && prefixKindRank < best.prefixKindRank)))) {
-            best = {rank:rank, length:length, prefixKindRank:prefixKindRank, icon:rule.icon, ruleIndex:i, kind:rule.kind, pattern:rule.pattern};
+        if (!best || rank < best.rank || (rank == best.rank && rank >= 2 && (length > best.length || (length == best.length && fieldRank < best.fieldRank)))) {
+            best = {rank:rank, length:length, fieldRank:fieldRank, icon:rule.icon, ruleIndex:i, kind:rule.kind, pattern:rule.pattern};
         }
     }
     return best ? {matched:true, icon:best.icon, ruleIndex:best.ruleIndex, kind:best.kind, pattern:best.pattern} : none;
