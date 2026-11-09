@@ -1,5 +1,15 @@
 // DAZ Studio filetype DAZ Script
 /*
+ * matew Wardrobe Sets v0.9.10.45 - first-open + set-change share WM-1 read scope
+ * PERF: mainDialog builds card widgets first, then one withReadScope reads the
+ * outfit summary, applies worn-first card order through an explicit cardLayout,
+ * and runs Worn diagnostics so inventory/materials maps stay shared. After
+ * Apply / restore / take-off, finally reuses diagnoses already stored on cards
+ * (renderCards(false)) when readSceneStatus just refreshed them, instead of a
+ * second scene scan. Take Off All label/tooltip and Take Off Set show/hide still
+ * run inside renderCards from the fresh summary (never left on provisional
+ * summary.valid=false). Scene.update / invalidateReadScope still discard the
+ * scope. Verification semantics are unchanged.
  * matew Wardrobe Sets v0.9.10.44 - UI read-scope reuse for inventory and materials
  * PERF: one synchronous read scope now covers readOutfitSummary + card
  * diagnostics. Inventory maps and material snapshots are reused inside that
@@ -513,7 +523,7 @@
  * is a fallback only when Wearable Manager Support.dsa is unavailable.
  */
 (function () {
-    var VERSION = "0.9.10.44", TITLE = "matew Wardrobe";
+    var VERSION = "0.9.10.45", TITLE = "matew Wardrobe";
     var DATA = "matewWardrobeSets_v1", FORMAT = "matew.wardrobe.sets";
     var FIGURES = ["Genesis", "Genesis2Female", "Genesis2Male", "Genesis3Female", "Genesis3Male",
         "Genesis8Female", "Genesis8Male", "Genesis8_1Female", "Genesis8_1Male", "Genesis9"];
@@ -3764,8 +3774,21 @@
     function audit(action, itemID, n, detail) {
         ctx.operations.push({action: action, itemID: itemID || "", nodeID: n ? value(n, "NodeID") : "", runtimeKey: key(n), detail: detail || ""});
     }
+    function auxiliaryWeightNode(n){
+        // Weight-editing helpers have no wearable identity of their own.
+        // Keep legacy, explicitly registered parts in their original schema.
+        if(!n||( !n.inherits("DzPushModifierWeightNode")&&
+            !n.inherits("DzDForceModifierWeightNode")))return false;
+        var d=dataObject(n);
+        return !d||(!d.ItemID&&!d.PartID&&!d.InstanceID&&!d.Role);
+    }
+    function wearableHierarchy(root){
+        return [root].concat(root.getNodeChildren(true)).filter(function(n){
+            return same(n,root)||!auxiliaryWeightNode(n);
+        });
+    }
     function nonBones(root) {
-        var nodes = [root].concat(root.getNodeChildren(true)), out = [];
+        var nodes = wearableHierarchy(root), out = [];
         for (var i = 0; i < nodes.length; i++) {
             if (isFigure(nodes[i])) throw problem("NESTED_FIGURE", "Wearable hierarchy contains a human figure.");
             if (!nodes[i].inherits("DzBone")) out.push(nodes[i]);
@@ -3793,7 +3816,7 @@
         var all = sceneNodes(), out = [];
         for (var i = 0; i < all.length; i++) {
             var n = all[i], p = n.getNodeParent();
-            if (same(n, fig) || n.inherits("DzBone") || isFigure(n) || wm2ProtectedChild(n,fig)) continue;
+            if (same(n, fig) || n.inherits("DzBone") || auxiliaryWeightNode(n) || isFigure(n) || wm2ProtectedChild(n,fig)) continue;
             if (same(p, fig) || same(boneOwner(p), fig) || (!p && same(follow(n), fig))) out.push(n);
         }
         out.sort(function (a, b) { return String(a.getLabel()).localeCompare(String(b.getLabel())); }); return out;
@@ -4093,7 +4116,7 @@
         if (!o || o.Role !== "ItemRoot" || o.LibraryID !== app.db.libraryID || o.ItemID !== it.id || o.VariantID !== it.variantID || !o.InstanceID)
             throw problem("ITEM_IDENTITY", root.getLabel());
         checkedID(o.InstanceID, "Instance ID");
-        var all = [root].concat(root.getNodeChildren(true)), parts = {}, allIDs = {}, partKeys = [], i;
+        var all = wearableHierarchy(root), parts = {}, allIDs = {}, partKeys = [], i;
         for (i = 0; i < all.length; i++) {
             var n = all[i], id = value(n, "NodeID");
             // Bones get durable IDs only when referenced by a recovery record.
@@ -4131,7 +4154,7 @@
         if(it.variantID!==d.VariantID||!d.InstanceID||it.figureType!==String(fig.objectName))
             throw problem("COMPOSITE_IDENTITY","Registered wearable identity has changed: "+root.getLabel());
         if(!same(humanAncestor(root),fig)&&!(!root.getNodeParent()&&same(follow(root),fig)))return null;
-        var all=[root].concat(root.getNodeChildren(true)),parts={},extras=[],oldByID={},missing=[],i;
+        var all=wearableHierarchy(root),parts={},extras=[],oldByID={},missing=[],i;
         for(i=0;i<it.parts.length;i++)oldByID[it.parts[i].id]=it.parts[i];
         for(i=0;i<all.length;i++){
             var n=all[i];if(n.inherits("DzBone"))continue;
@@ -4937,7 +4960,7 @@
                     n.removeDataItem(foreign);
                     if(n.findDataItem("MatewWearables"))throw problem("EXPORT_FOREIGN_DETACH",n.getLabel());
                 }
-                if (n.inherits("DzBone")) { if (d) putData(n, null); continue; }
+                if (n.inherits("DzBone") || auxiliaryWeightNode(n)) { if (d) putData(n, null); continue; }
                 putData(n, {Schema: "1", LibraryID: app.db.libraryID, ItemID: it.id, VariantID: it.variantID, PartID: d.PartID,
                     Role: same(n, root) ? "ItemRoot" : "Part", ExportDefinition: "1"});
             }
@@ -5009,7 +5032,7 @@
         if (figurePoseAuditEnabled()) must(closeNumbers(beforePose, poseRecord(fig)), "LOAD_TARGET_UNCHANGED", "Target pose/scalars unchanged by native import.");
         var parts = {}, root = null, nonbone = 0, bad = [];
         for (var i = 0; i < added.length; i++) {
-            var n = added[i]; if (n.inherits("DzBone")) continue; nonbone++;
+            var n = added[i]; if (n.inherits("DzBone") || auxiliaryWeightNode(n)) continue; nonbone++;
             var d = dataObject(n);
             if (!d || d.LibraryID !== app.db.libraryID || d.ItemID !== it.id || d.VariantID !== it.variantID ||
                 !d.PartID || own(parts, d.PartID) || d.ExportDefinition !== "1" || d.NodeID || d.InstanceID || d.OwnerFigureID || d.Recovery || d.Pending) { bad.push(String(n.getLabel())); continue; }
@@ -5028,7 +5051,7 @@
         for (var j = 0; j < added.length; j++) {
             var nn = added[j];
             if (nn.findDataItem("MatewWearables")) throw problem("FOREIGN_IMPORTED_DATA", "A foreign manager's data was found in the preset; imported copies will be removed.");
-            if (nn.inherits("DzBone")) { if (dataObject(nn)) putData(nn, null); continue; }
+            if (nn.inherits("DzBone") || auxiliaryWeightNode(nn)) { if (dataObject(nn)) putData(nn, null); continue; }
             var clean = dataObject(nn); delete clean.ExportDefinition;
             clean.InstanceID = instance; clean.NodeID = unique("node"); clean.OwnerFigureID = owner;
             delete clean.Recovery; delete clean.Pending; putData(nn, clean);
@@ -9259,7 +9282,7 @@
         // Ownership may have been changed on only some parts when a metadata
         // write failed. Prove every original identity before restoring links;
         // never replace a missing source with another matching item.
-        var it=app.db.items[row.itemID],rec=row.record,root=nodeByID(rec.rootID,"Transfer rollback root"),parts={},all=[root].concat(root.getNodeChildren(true));
+        var it=app.db.items[row.itemID],rec=row.record,root=nodeByID(rec.rootID,"Transfer rollback root"),parts={},all=wearableHierarchy(root);
         if(key(root)!==row.facts.rootKey||!closeNumbers(all.map(key).sort(),row.facts.allKeys))throw problem("TRANSFER_ROLLBACK_HIERARCHY",it.name);
         for(var h=0;h<rec.hierarchy.length;h++){
             var hr=rec.hierarchy[h],hn=nodeByID(hr.nodeID,"Transfer rollback hierarchy");
@@ -15657,7 +15680,10 @@ function WM2ResourceName(directory,name) {
 
         var sceneStatus=label(box,""),scroll=new DzScrollArea(box);scroll.widgetResizable=true;
         scroll.setFixedHeight(430);scroll.setHorizontalScrollbarDisplay(false);
-        var content=new DzVGroupBox(scroll);scroll.setWidget(content);
+        var content=new DzVGroupBox(scroll);flattenGroupBox(content);scroll.setWidget(content);
+        // Explicit layout so worn-first reorder can re-add cards after the first
+        // outfit summary. WM-2 briefly referenced cardLayout without creating it.
+        var cardLayout=new DzVBoxLayout(content);cardLayout.margin=0;cardLayout.spacing=4;
         sceneStatus.setFixedHeight(22);var status=label(box,shortActionStatus(app.lastReport));status.setFixedHeight(22);
 
         var bottom=new DzHGroupBox(box),settings=new DzPushButton(bottom),bottomStatus=label(bottom,""),close=new DzPushButton(bottom);
@@ -15667,22 +15693,55 @@ function WM2ResourceName(directory,name) {
         close.setFixedSize(120,36);close.text="Close";close.sizedFromIcon=true;close.autoDefault=false;
         setTextButtonResourceIconCandidates(close, ["Wearable Manager Close.png"],24,24,true);
 
-        var sortFigure=figs.length?figs[selectedIndex]:null,sortSummary=sortFigure?readOutfitSummary(sortFigure):{valid:false,activeIDs:[],message:""};
-        var sets=compatibleDialogSetIDs(app.db,sortFigure),cards=[],busy=false,action=null,summary=sortSummary,
-            recoverableComposite=null,shownCommit=app.db.commitID;
-        sets.sort(function(a,b){
-            var aa=app.db.sets[a],bb=app.db.sets[b],aw=false,bw=false;
-            if(sortFigure&&sortSummary.valid){
-                try{aw=!scopeProblem(aa,sortFigure)&&outfitMatches(aa,sortSummary);}catch(ignoreAW){}
-                try{bw=!scopeProblem(bb,sortFigure)&&outfitMatches(bb,sortSummary);}catch(ignoreBW){}
-            }
-            if(aw!==bw)return aw?-1:1;
+        // Defer readOutfitSummary until after card widgets exist so first open
+        // shares one withReadScope with Worn diagnostics (WM-1 maps). Take Off
+        // chrome is updated only after that fresh summary inside renderCards().
+        var sortFigure=figs.length?figs[selectedIndex]:null;
+        var sets=compatibleDialogSetIDs(app.db,sortFigure),cards=[],busy=false,action=null,
+            summary={valid:false,activeIDs:[],message:""},
+            recoverableComposite=null,shownCommit=app.db.commitID,sceneStatusFresh=false;
+        function compareSetsSecondary(aa,bb){
             var ra=setScopeRank(aa),rb=setScopeRank(bb);
             if(ra!==rb)return ra-rb;
             var ta=setModifiedTime(aa),tb=setModifiedTime(bb);if(ta!==tb)return tb-ta;
             return aa.name.localeCompare(bb.name);
-        });
+        }
+        function compareSetsWornFirst(aa,bb,fig,snap){
+            var aw=false,bw=false;
+            if(fig&&snap&&snap.valid){
+                try{aw=!scopeProblem(aa,fig)&&outfitMatches(aa,snap);}catch(ignoreAW){}
+                try{bw=!scopeProblem(bb,fig)&&outfitMatches(bb,snap);}catch(ignoreBW){}
+            }
+            if(aw!==bw)return aw?-1:1;
+            return compareSetsSecondary(aa,bb);
+        }
+        // Provisional order only; worn-first is applied inside openSceneStatus().
+        sets.sort(function(a,b){return compareSetsSecondary(app.db.sets[a],app.db.sets[b]);});
         function currentFigure(){return figs.length?figs[selectedIndex]:null;}
+        function applyWornFirstCardOrder(){
+            if(!sortFigure||!summary.valid||!cards.length)return;
+            cards.sort(function(ca,cb){return compareSetsWornFirst(ca.set,cb.set,sortFigure,summary);});
+            sets=cards.map(function(c){return c.set.id;});
+            for(var oi=0;oi<cards.length;oi++)cardLayout.addWidget(cards[oi].group);
+        }
+        function openSceneStatus(){
+            // First paint: summary + worn-first order + diagnostics in one scope.
+            // Always assign summary before renderCards so Take Off All / Take Off
+            // Set never stay on the provisional summary.valid=false placeholder.
+            sceneStatusFresh=false;
+            withReadScope(function(){
+                var fig=currentFigure();
+                summary=fig?readOutfitSummary(fig):{valid:false,activeIDs:[],message:"No supported scene figure selected."};
+                applyWornFirstCardOrder();
+                updateFigureSelection();renderCards();
+                sceneStatusFresh=true;
+            },false);
+        }
+        function refreshCardChrome(){
+            // After a successful scoped status read, keep Take Off / filter chrome
+            // in sync without rebuilding inventory/materials diagnoses.
+            if(sceneStatusFresh)renderCards(false);else renderCards();
+        }
         function selectedGroupFilter(){var row=groupFilterRows[groupFilter.currentItem];return row?row.id:"__all__";}
         function persistControls(){app.searchText=String(search.text);app.groupFilterID=selectedGroupFilter();app.onlyCompatible=true;persistUISettings();}
         function updateFigureSelection(){
@@ -15820,9 +15879,11 @@ function WM2ResourceName(directory,name) {
         function readSceneStatus(){
             // One read scope for summary inventory + Worn-card material/property
             // diagnostics. Nested withReadScope/inventory reuse this scope.
+            sceneStatusFresh=false;
             withReadScope(function(){
                 var fig=currentFigure();summary=fig?readOutfitSummary(fig):{valid:false,activeIDs:[],message:"No supported scene figure selected."};
                 updateFigureSelection();renderCards();
+                sceneStatusFresh=true;
             },false);
         }
         function leave(type,id){
@@ -15857,10 +15918,11 @@ function WM2ResourceName(directory,name) {
                 if(r&&r.ok){action={type:"refresh",figureKey:key(fig)};dlg.close();return;}
                 readSceneStatus();
             }catch(e){
+                sceneStatusFresh=false;
                 r=runAction("apply",key(fig),{id:st.id,preflightError:e});
                 status.text=shortActionStatus(r);presentActionReport(r);
             }
-            finally{busy=false;box.enabled=true;renderCards();}
+            finally{busy=false;box.enabled=true;if(!action)refreshCardChrome();}
         }
         function freshPropertyDiagnosis(st,fig) {
             var latest=readOutfitSummary(fig);
@@ -15890,8 +15952,8 @@ function WM2ResourceName(directory,name) {
                 if(app.abortRequested){action={type:"abort",figureKey:key(fig)};dlg.close();return;}
                 if(shownCommit!==app.db.commitID){action={type:"refresh",figureKey:key(fig)};dlg.close();return;}
                 readSceneStatus();
-            }catch(e){status.text="Stopped - "+userErrorText(e);MessageBox.critical(userErrorText(e),TITLE,"&OK");}
-            finally{busy=false;box.enabled=true;renderCards();}
+            }catch(e){sceneStatusFresh=false;status.text="Stopped - "+userErrorText(e);MessageBox.critical(userErrorText(e),TITLE,"&OK");}
+            finally{busy=false;box.enabled=true;if(!action)refreshCardChrome();}
         }
         function restoreCardHandPoses(st) {
             var fig=currentFigure();if(!fig||busy||action)return;
@@ -15904,8 +15966,8 @@ function WM2ResourceName(directory,name) {
                 if(app.abortRequested){action={type:"abort",figureKey:key(fig)};dlg.close();return;}
                 if(shownCommit!==app.db.commitID){action={type:"refresh",figureKey:key(fig)};dlg.close();return;}
                 readSceneStatus();
-            }catch(e){status.text="Stopped - "+userErrorText(e);MessageBox.critical(userErrorText(e),TITLE,"&OK");}
-            finally{busy=false;box.enabled=true;renderCards();}
+            }catch(e){sceneStatusFresh=false;status.text="Stopped - "+userErrorText(e);MessageBox.critical(userErrorText(e),TITLE,"&OK");}
+            finally{busy=false;box.enabled=true;if(!action)refreshCardChrome();}
         }
         function takeOffCardSet(st){
             var fig=currentFigure();if(!fig||busy||action)return;
@@ -15922,8 +15984,8 @@ function WM2ResourceName(directory,name) {
                 if(app.abortRequested){action={type:"abort",figureKey:key(fig)};dlg.close();return;}
                 if(shownCommit!==app.db.commitID){action={type:"refresh",figureKey:key(fig)};dlg.close();return;}
                 readSceneStatus();
-            }catch(e){status.text="Stopped - "+userErrorText(e);MessageBox.critical(userErrorText(e),TITLE,"&OK");}
-            finally{busy=false;box.enabled=true;renderCards();}
+            }catch(e){sceneStatusFresh=false;status.text="Stopped - "+userErrorText(e);MessageBox.critical(userErrorText(e),TITLE,"&OK");}
+            finally{busy=false;box.enabled=true;if(!action)refreshCardChrome();}
         }
         function takeOffRegistered(){
             var fig=currentFigure();if(busy||action||!fig)return;
@@ -15943,13 +16005,14 @@ function WM2ResourceName(directory,name) {
                 if(app.abortRequested){action={type:"abort",figureKey:key(fig)};dlg.close();return;}
                 if(shownCommit!==app.db.commitID){action={type:"refresh",figureKey:key(fig)};dlg.close();return;}
                 readSceneStatus();
-            }catch(e){status.text="Stopped - "+userErrorText(e);MessageBox.critical(userErrorText(e),TITLE,"&OK");}
-            finally{busy=false;box.enabled=true;renderCards();}
+            }catch(e){sceneStatusFresh=false;status.text="Stopped - "+userErrorText(e);MessageBox.critical(userErrorText(e),TITLE,"&OK");}
+            finally{busy=false;box.enabled=true;if(!action)refreshCardChrome();}
         }
         connect(takeOffAll,"clicked()",takeOffRegistered);
         var cardTitleFont=newGeorgiaFont();cardTitleFont.pixelSize=18;cardTitleFont.bold=true;
         for(i=0;i<sets.length;i++)(function(st){
             var group=new DzHGroupBox(content),apply=new DzPushButton(group),middle=new DzVGroupBox(group),right=new DzVGroupBox(group);
+            cardLayout.addWidget(group);
             group.setFixedHeight(143);setScopeCardBorder(group,st.scope.kind);flattenGroupBox(middle);
             // Main card content begins at the same top inset as the icon.
             middle.insideMargin=0;middle.insideSpacing=2;
@@ -16031,6 +16094,9 @@ function WM2ResourceName(directory,name) {
             if(!setResourceButtonIconCandidates(partial,["Wearable Manager Partial Set.png"],36,36))partial.text="Partial";
             if(!setResourceButtonIconCandidates(removeSet,["Wearable Manager Take Off Set.png"],36,36))removeSet.text="Off";
             setResourceButtonIcon(del,"Wearable Manager Clothing Deletion.png",36,36);
+            // Hidden until openSceneStatus/renderCards sees a fresh summary with
+            // worn members — never flash Take Off Set on the provisional empty summary.
+            removeSet.hide();
 
             cards.push({set:st,group:group,right:right,apply:apply,partial:partial,removeSet:removeSet,edit:edit,dup:dup,del:del,worn:worn,items:items,scope:scope,title:title,
                 partiallyVerifiedRow:partiallyVerifiedRow,
@@ -16050,7 +16116,10 @@ function WM2ResourceName(directory,name) {
             connect(materialDetails,"clicked()",function(){showCardMaterialDetails(st);});
             connect(restoreHands,"clicked()",function(){restoreCardHandPoses(st);});
         })(app.db.sets[sets[i]]);
-        if(!sets.length)label(content,"No compatible outfit sets. Choose a figure or click New Set...");
+        if(!sets.length){
+            var emptySets=label(content,"No compatible outfit sets. Choose a figure or click New Set...");
+            cardLayout.addWidget(emptySets);
+        }
         connect(search,"textChanged(const QString&)",function(){if(!busy)renderCards(false);});
         connect(groupFilter,"activated(int)",function(){if(!busy){app.groupFilterID=selectedGroupFilter();renderCards(false);}});
         connect(settings,"clicked()",function(){leave("settings");});
@@ -16063,9 +16132,10 @@ function WM2ResourceName(directory,name) {
             else if(result==="camera_created"){action={type:"camera_setup_exit",figureKey:key(fig)};dlg.close();}
             else if(result==="changed"){action={type:"refresh",figureKey:key(fig)};dlg.close();}
         });
-        // sortSummary was just read synchronously for this same figure. No
-        // scene action or event loop occurred while constructing these widgets.
-        updateFigureSelection();renderCards();
+        // Widgets are ready. One read scope covers summary, worn-first order,
+        // and Worn-card diagnostics so inventory/materials are not rebuilt.
+        // Take Off All / Take Off Set chrome is assigned only after this call.
+        openSceneStatus();
         flattenGroupBox(box);box.insideMargin=4;box.insideSpacing=4;box.setFixedHeight(968);mainLayout.addWidget(box);dlg.setFixedSize(1020,968);
         try{dlg.exec();try{persistControls();}catch(pe){MessageBox.warning("Preferences were not saved: "+userErrorText(pe),TITLE,"&OK");}}
         finally{dlg.deleteLater();releasePropertyHelper();}
