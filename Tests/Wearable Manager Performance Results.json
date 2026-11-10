@@ -1,0 +1,342 @@
+{
+  "date": "2026-10-13",
+  "daz": "6.25",
+  "method": {
+    "ordinary": "Before/after/after/before, 3 dialog opens and 4 repeated action pairs per run. Isolated scene and library copies.",
+    "geo": "Separate scene runs, 4 repeated action pairs per version. Excludes native scene-clear failure between runs.",
+    "startup": "Catalog refresh, scene status and main dialog construction through event-loop entry. Excludes DAZ process startup, figure loading, and source parsing.",
+    "limits": "Machine-specific medians; imports measured separately; no promise for arbitrary scenes."
+  },
+  "results": [
+    {
+      "scenario": "ordinary",
+      "mode": "before",
+      "operation": "startup",
+      "samplesMs": [
+        308,
+        362,
+        431,
+        486,
+        955,
+        1195
+      ],
+      "medianMs": 458.5
+    },
+    {
+      "scenario": "ordinary",
+      "mode": "before",
+      "operation": "import",
+      "samplesMs": [
+        2332,
+        2621
+      ],
+      "medianMs": 2476.5
+    },
+    {
+      "scenario": "ordinary",
+      "mode": "before",
+      "operation": "take_off",
+      "samplesMs": [
+        773,
+        775,
+        897,
+        898,
+        907,
+        939,
+        1496,
+        1558
+      ],
+      "medianMs": 902.5
+    },
+    {
+      "scenario": "ordinary",
+      "mode": "before",
+      "operation": "put_on",
+      "samplesMs": [
+        1830,
+        1879,
+        1886,
+        1915,
+        1956,
+        1980,
+        1988,
+        2123
+      ],
+      "medianMs": 1935.5
+    },
+    {
+      "scenario": "ordinary",
+      "mode": "before",
+      "operation": "hand_take_off",
+      "samplesMs": [
+        1174,
+        1175,
+        1218,
+        1222,
+        1258,
+        1265,
+        1276,
+        1370
+      ],
+      "medianMs": 1240
+    },
+    {
+      "scenario": "ordinary",
+      "mode": "before",
+      "operation": "hand_put_on",
+      "samplesMs": [
+        1269,
+        1306,
+        1310,
+        1344,
+        1369,
+        1383,
+        1398,
+        1423
+      ],
+      "medianMs": 1356.5
+    },
+    {
+      "scenario": "ordinary",
+      "mode": "after",
+      "operation": "startup",
+      "samplesMs": [
+        362,
+        377,
+        485,
+        502,
+        904,
+        913
+      ],
+      "medianMs": 493.5
+    },
+    {
+      "scenario": "ordinary",
+      "mode": "after",
+      "operation": "import",
+      "samplesMs": [
+        2621,
+        2700
+      ],
+      "medianMs": 2660.5
+    },
+    {
+      "scenario": "ordinary",
+      "mode": "after",
+      "operation": "take_off",
+      "samplesMs": [
+        887,
+        890,
+        959,
+        996,
+        1065,
+        1066,
+        1525,
+        1736
+      ],
+      "medianMs": 1030.5
+    },
+    {
+      "scenario": "ordinary",
+      "mode": "after",
+      "operation": "put_on",
+      "samplesMs": [
+        1877,
+        1895,
+        1991,
+        2009,
+        2046,
+        2097,
+        2128,
+        2135
+      ],
+      "medianMs": 2027.5
+    },
+    {
+      "scenario": "ordinary",
+      "mode": "after",
+      "operation": "hand_take_off",
+      "samplesMs": [
+        1164,
+        1176,
+        1235,
+        1338,
+        1346,
+        1378,
+        1402,
+        1459
+      ],
+      "medianMs": 1342
+    },
+    {
+      "scenario": "ordinary",
+      "mode": "after",
+      "operation": "hand_put_on",
+      "samplesMs": [
+        1268,
+        1345,
+        1361,
+        1365,
+        1407,
+        1542,
+        1543,
+        1574
+      ],
+      "medianMs": 1386
+    },
+    {
+      "scenario": "geo",
+      "mode": "before",
+      "operation": "startup",
+      "samplesMs": [
+        429,
+        539,
+        1462
+      ],
+      "medianMs": 539
+    },
+    {
+      "scenario": "geo",
+      "mode": "before",
+      "operation": "import",
+      "samplesMs": [
+        9606
+      ],
+      "medianMs": 9606
+    },
+    {
+      "scenario": "geo",
+      "mode": "before",
+      "operation": "take_off",
+      "samplesMs": [
+        2239,
+        2285,
+        2335,
+        2611
+      ],
+      "medianMs": 2310
+    },
+    {
+      "scenario": "geo",
+      "mode": "before",
+      "operation": "put_on",
+      "samplesMs": [
+        3143,
+        3162,
+        3170,
+        3398
+      ],
+      "medianMs": 3166
+    },
+    {
+      "scenario": "geo",
+      "mode": "after",
+      "operation": "startup",
+      "samplesMs": [
+        418,
+        529,
+        1520
+      ],
+      "medianMs": 529
+    },
+    {
+      "scenario": "geo",
+      "mode": "after",
+      "operation": "import",
+      "samplesMs": [
+        9584
+      ],
+      "medianMs": 9584
+    },
+    {
+      "scenario": "geo",
+      "mode": "after",
+      "operation": "take_off",
+      "samplesMs": [
+        3277,
+        3311,
+        3339,
+        3461
+      ],
+      "medianMs": 3325
+    },
+    {
+      "scenario": "geo",
+      "mode": "after",
+      "operation": "put_on",
+      "samplesMs": [
+        3983,
+        4029,
+        4059,
+        4448
+      ],
+      "medianMs": 4044
+    },
+    {
+      "scenario": "geo",
+      "mode": "compact",
+      "operation": "startup",
+      "samplesMs": [
+        364,
+        434,
+        843
+      ],
+      "medianMs": 434
+    },
+    {
+      "scenario": "geo",
+      "mode": "compact",
+      "operation": "import",
+      "samplesMs": [
+        8869
+      ],
+      "medianMs": 8869
+    },
+    {
+      "scenario": "geo",
+      "mode": "compact",
+      "operation": "take_off",
+      "samplesMs": [
+        2528,
+        2667,
+        2677,
+        2682
+      ],
+      "medianMs": 2672
+    },
+    {
+      "scenario": "geo",
+      "mode": "compact",
+      "operation": "put_on",
+      "samplesMs": [
+        3364,
+        3384,
+        3499,
+        3568
+      ],
+      "medianMs": 3441.5
+    }
+  ],
+  "sourceSha256": "fca7d1033459decf5baaf4ff39a6dac722eb508232c5d2f32b2cae7906e4aa40",
+  "automatedSuite": {
+    "baselineCommit": "1d15974476ccecaa30f8fe690a9bee6e991194bc",
+    "baselineRoot": "D:\\Tests\\DAZ Test Folder\\Scripts\\matew\\Wearables Manager 2\\.test-output\\baseline",
+    "baselineHashesVerified": true,
+    "sourceRoot": "D:\\Tests\\DAZ Test Folder\\Scripts\\matew\\Wearables Manager 2\\.test-output\\hand-suite",
+    "nativeDAZ": false,
+    "passed": 1510,
+    "failed": 0,
+    "skipped": 2
+  },
+  "nativeValidation": {
+    "geoUndoRedoDAZ4": true,
+    "geoUndoRedoDAZ6": true,
+    "encodedAfterCloseDAZ4": true,
+    "encodedAfterCloseDAZ6": true,
+    "previousSnapshotFormat": true
+  },
+  "shippedSha256": {
+    "Wearable Manager Wardrobe.dse": "0c3eb3399038fb6a56895781675fdd9211779298665ed4178cc087995d94656a",
+    "Resources/Wearable Manager Undo Materials.dse": "51d9fd5dc23e0b43993b6c9451b43f3420859c3a98a54bf0bab5be4d512b5e46"
+  }
+}

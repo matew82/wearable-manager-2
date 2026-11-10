@@ -1,0 +1,110 @@
+/* Standalone live-property artwork and value editors. No scene writes or global native-image cache. */
+var WM2PropertyUI = (function () {
+    function finite(n) { return typeof n === 'number' && isFinite(n); }
+    function read(o, method, field, fallback) {
+        try { if (o && typeof o[method] === 'function') return o[method](); if (o && o[field] !== undefined) return o[field]; } catch (e) {}
+        return fallback;
+    }
+    function inherits(p, name) { try { return !!p && p.inherits(name); } catch (e) { return false; } }
+    function isNumeric(p) { return inherits(p, 'DzNumericProperty') && !inherits(p, 'DzBoolProperty') && !inherits(p, 'DzEnumProperty'); }
+    function rgb(c) {
+        if (!c) return null;
+        var a = [Number(c.red), Number(c.green), Number(c.blue)];
+        if (!finite(a[0]) || !finite(a[1]) || !finite(a[2])) return null;
+        for (var i = 0; i < 3; i++) a[i] = Math.max(0, Math.min(255, Math.round(a[i])));
+        return a;
+    }
+    function metadata(p) {
+        var pr = read(p, 'getPresentation', 'presentation', null), a = rgb(read(pr, 'getColorA', 'colorA', null)), b = rgb(read(pr, 'getColorB', 'colorB', null));
+        return { label: String(read(p, 'getLabel', 'label', read(p, 'getName', 'name', 'Property'))),
+            small: String(read(pr, 'getIconSmall', 'iconSmall', '') || ''), large: String(read(pr, 'getIconLarge', 'iconLarge', '') || ''),
+            colors: a && b ? [a, b] : null, min: Number(read(p, 'getMin', 'min', NaN)), max: Number(read(p, 'getMax', 'max', NaN)),
+            clamped: read(p, 'isClamped', 'clamped', false) === true, percent: read(p, 'getDisplayAsPercent', 'displayAsPercent', false) === true,
+            integer: inherits(p, 'DzIntProperty'), step: Number(read(p, 'getSensitivity', 'sensitivity', NaN)), numeric: isNumeric(p) };
+    }
+    function resolve(raw) {
+        if (!raw) return '';
+        var s = String(raw), result = s;
+        try { var fi = new DzFileInfo(s); if (fi.exists() && fi.isFile()) return s; } catch (e) {}
+        try { var cm = App.getContentMgr(); result = String(cm.getAbsolutePath(s, false) || ''); if (!result && typeof cm.findFile === 'function') result = String(cm.findFile(s) || ''); } catch (e2) {}
+        return result;
+    }
+    function image(raw, size) {
+        try {
+            var path = resolve(raw); if (!path) return null;
+            var im = new Image(); if (im.load(path) === false || im.isNull()) return null;
+            var w = Number(im.width), h = Number(im.height); if (!finite(w) || !finite(h) || w < 1 || h < 1 || w > 8192 || h > 8192) return null;
+            var scale = Math.min(1, size / w, size / h); if (scale < 1) im = im.smoothScale(Math.max(1, Math.round(w * scale)), Math.max(1, Math.round(h * scale)));
+            var px = new Pixmap(); px.fromImage(im); return px.isNull() ? null : {image: im, pixmap: px};
+        } catch (e) { return null; }
+    }
+    function style(w, s) { try { w.getWidget().setStyleSheet(s); } catch (e) {} }
+    function title(parent, text, colors, width, refs, existingLabel) {
+        var label = existingLabel || new DzLabel(parent); label.text = text; label.textFormat = 0; label.toolTip = text; label.wordWrap = false; label.setFixedHeight(32);
+        style(label, 'QLabel { border:0px; margin:0px; padding:0px; color:#F1F1F1; background:transparent; }');
+        if (!colors) return label;
+        try {
+            var im = new Image(48, 1, Image.Format_RGB32);
+            for (var x = 0; x < 48; x++) { var c = [], t = x / 47; for (var j = 0; j < 3; j++) c[j] = Math.round(colors[0][j] + (colors[1][j] - colors[0][j]) * t); im.setPixel(x, 0, new Color(c[0], c[1], c[2])); }
+            im = im.smoothScale(width, 32);
+            var font = new Font(label.font); font.pointSize = Math.max(10, Number(font.pointSize) || 10);
+            var shown = typeof font.elidedText === 'function' ? String(font.elidedText(text, 1, width - 12)) : text;
+            if (typeof im.drawText !== 'function') return label;
+            var flags = 1 | 32 | 256, sz = font.size(shown, flags), y = Math.max(0, Math.floor((32 - Number(sz.height)) / 2));
+            for (var dy = -1; dy <= 1; dy++) for (var dx = -1; dx <= 1; dx++) if (dx || dy) im.drawText(6 + dx, y + dy, shown, font, new Color(0, 0, 0, 255), flags);
+            im.drawText(6, y, shown, font, new Color(241, 241, 241, 255), flags);
+            var px = new Pixmap(); px.fromImage(im); if (px.isNull()) return label;
+            label.text = ''; label.pixmap = px; label.scaledContents = false; refs.push(im, px, font);
+        } catch (e) { label.text = text; }
+        return label;
+    }
+    function slider(parent, m, caption, value) {
+        if (!finite(value)) throw new Error('Non-finite ' + caption + ' value');
+        var ctor = m.integer ? DzIntSlider : DzFloatSlider, w = new ctor(parent), lo = finite(m.min) ? m.min : Number(w.min), hi = finite(m.max) ? m.max : Number(w.max);
+        if (!finite(lo) || !finite(hi) || lo > hi) throw new Error('Invalid native property range');
+        if (m.integer && (Math.floor(value) !== value || value < -2147483648 || value > 2147483647 || lo < -2147483648 || hi > 2147483647)) throw new Error('Integer value outside slider range');
+        // Broaden temporarily to avoid intermediate native clamping, then apply the real property limits.
+        w.clamped = false; w.min = Math.min(Number(w.min), lo, value); w.max = Math.max(Number(w.max), hi, value);
+        w.min = lo; w.max = hi; w.clamped = m.clamped; w.label = caption; w.labelVisible = true; w.textVisible = true; w.textEditable = true;
+        w.displayAsPercent = m.percent; w.sensitivity = finite(m.step) && m.step > 0 ? m.step : m.integer ? 1 : 0.01;
+        w.defaultValue = value; w.restorable = true; w.value = value;
+        if (Math.abs(Number(w.value) - value) > 0.000001 * Math.max(1, Math.abs(value))) throw new Error('Saved value outside native property range');
+        w.setFixedHeight(28); return w;
+    }
+    function create(parent, p, options) {
+        options = options || {}; var m = metadata(p), width = Math.max(180, Math.floor(Number(options.width) || 500)), size = Math.max(16, Math.min(91, Math.floor(Number(options.iconSize) || 91))), refs = [];
+        var root = new DzWidget(parent), outer = new DzHBoxLayout(root); outer.margin = 0; outer.spacing = 6; refs.push(outer);
+        try {
+        var deferred = options.deferArtwork === true, artworkDone = !deferred, disposed = false;
+        var art = deferred ? null : image(m.small, size) || image(m.large, size), icon = null, hasIcon = deferred ? !!(m.small || m.large) : !!art;
+        if (hasIcon) { icon = new DzLabel(root); icon.setFixedSize(size, size); icon.alignment = 0x84; if (art) icon.pixmap = art.pixmap; outer.addWidget(icon); refs.push(icon); if (art) refs.push(art); }
+        var body = new DzWidget(root), layout = new DzVBoxLayout(body); layout.margin = 0; layout.spacing = 3; outer.addWidget(body, 1); refs.push(body, layout);
+        var text = String(options.label || m.label), name = title(body, text, deferred ? null : m.colors, Math.max(100, width - (hasIcon ? size + 6 : 0)), refs); layout.addWidget(name); refs.push(name);
+        var apply = null, reset = null;
+        if (options.sliders) {
+            if (!m.numeric) throw new Error('Property is not scalar numeric');
+            apply = slider(body, m, 'Set value', Number(options.applyValue)); reset = slider(body, m, 'Reset value', Number(options.resetValue)); layout.addWidget(apply); layout.addWidget(reset); refs.push(apply, reset);
+        }
+        root.minWidth = width; root.setFixedHeight(Math.max(hasIcon ? size : 0, options.sliders ? 94 : 32));
+        return { widget: root, body: body, label: name, icon: icon, apply: apply, reset: reset, metadata: m, refs: refs,
+            getApplyValue: function () { return apply ? Number(apply.value) : null; }, getResetValue: function () { return reset ? Number(reset.value) : null; },
+            refreshArtwork: function () {
+                if (disposed || artworkDone) return false;
+                artworkDone = true;
+                if (icon) {
+                    art = image(m.small, size) || image(m.large, size);
+                    if (art) { icon.pixmap = art.pixmap; refs.push(art); }
+                    else { icon.hide(); hasIcon = false; root.setFixedHeight(options.sliders ? 94 : 32); }
+                }
+                title(body, text, m.colors, Math.max(100, width - (hasIcon ? size + 6 : 0)), refs, name);
+                return true;
+            },
+            dispose: function () { disposed = true; /* Qt parent owns widgets; retain artwork until parent disposal. */ } };
+        } catch (creationError) {
+            try { root.hide(); } catch (ignoreHide) {}
+            try { root.deleteLater(); } catch (ignoreDelete) {}
+            throw creationError;
+        }
+    }
+    return {metadata: metadata, isNumeric: isNumeric, create: create};
+})();

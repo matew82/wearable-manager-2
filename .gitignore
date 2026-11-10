@@ -15,3 +15,8 @@ node_modules/
 # Local WM2 preferences and retained settings backups
 /Resources/WM2 Settings.json
 /Resources/WM2 Settings.json.wm2-*
+/Resources/Wearable Manager Settings.json
+/Resources/Wearable Manager Settings.json.wm2-*
+
+# Personal recovered scene; never distribute with the product
+/Wearable Manager Recovered Scene.duf
