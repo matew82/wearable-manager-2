@@ -60,6 +60,14 @@ function fixture(src){
   return c;
 }
 const commonTests={
+  'DAZ4 wrapped success code accepts readable shell backup':c=>{
+    const mgr=c.App.getAssetIOMgr(),save=mgr.doSaveWithOptions;mgr.doSaveWithOptions=(...a)=>{save(...a);return {valueOf:()=>0};};c.App.getAssetIOMgr=()=>mgr;
+    assert.equal(c.SaveShellMaterialsInFile(c.makeNode('Genesis9'),c.makeShell({},[material('graft',1)])),true);
+  },
+  'DAZ4 wrapped failure code rejects shell backup':c=>{
+    const mgr=c.App.getAssetIOMgr(),save=mgr.doSaveWithOptions;mgr.doSaveWithOptions=(...a)=>{save(...a);return {valueOf:()=>5};};c.App.getAssetIOMgr=()=>mgr;
+    const shell=c.makeShell({},[material('graft',1)]);assert.equal(c.SaveShellMaterialsInFile(c.makeNode('Genesis9'),shell),false);assert.equal(shell.hasData,false);
+  },
   'shell export includes internal channel selectors plus explicit value and image':c=>{
     const entries=c.WM2ShellMaterialEntries({getPropertyList:()=>[{name:'Diffuse Color',getLabel:()=> 'Base Color',inherits:()=>true,isMappable:()=>true}]});
     assert.deepEqual(JSON.parse(JSON.stringify(entries)),[['Diffuse Color','Value','Image'],['Base Color','Value','Image']]);

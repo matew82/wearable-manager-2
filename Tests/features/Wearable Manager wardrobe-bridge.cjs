@@ -62,7 +62,7 @@ test('Wardrobe ignores WM storage and accepts the same item after Put On',()=>{
   same:(a,b)=>a===b,humanAncestor:x=>x.parent===fig?fig:x.parent===other?other:null,follow:()=>null,
   key:n=>String(n.elementID),own:(o,k)=>Object.hasOwn(o,k),inspectInstance:(it,root)=>({root}),foreignDataGuard:foreignGuard(),
   problem:(code,message)=>Object.assign(new Error(message),{code})});
- vm.runInContext(getFunction(wardrobe,'inReferenceStorage').text+'\n'+getFunction(wardrobe,'inventoryImpl').text,c);const db=catalog(),before=JSON.stringify(n.own);
+ vm.runInContext(getFunction(wardrobe,'isDetachedSceneProp').text+'\n'+getFunction(wardrobe,'inReferenceStorage').text+'\n'+getFunction(wardrobe,'inventoryImpl').text,c);const db=catalog(),before=JSON.stringify(n.own);
  assert.equal(c.inventoryImpl(fig,db).matew_item.where,'active');n.parent=wmStorage;
  assert.deepEqual(plain(c.inventoryImpl(fig,db)),{});
  n.parent=fig;assert.equal(c.inventoryImpl(fig,db).matew_item.where,'active');

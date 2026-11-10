@@ -46,7 +46,7 @@ function fixture(){
   }
  }
  const c=vm.createContext({App:{getAppDataPath:()=>appdata},DzFileInfo:Info,DzDir:Dir,DzFile:File,DzSettings:{StringValue:3},Scene:{getNodeList:()=>state.nodes},
-  TITLE:'WM2',own:(o,k)=>Object.prototype.hasOwnProperty.call(o,k),errorText:String,
+  TITLE:'WM2',own:(o,k)=>Object.prototype.hasOwnProperty.call(o,k),errorText:String,userErrorText:String,print(m){state.diagnostics=(state.diagnostics||[]).concat(String(m));},
   readDataNative:n=>{if(n.badOwn)throw Error('bad authoritative metadata');return n.own??null;},
   geoWardrobeManifestPath:p=>{if(!/^Materials\/matew_geo_wardrobe_[a-zA-Z0-9_]+\.json$/.test(p))throw Error('invalid manifest');return p;},
   MessageBox:{warning(...args){messages.push(args);if(args.length===4){if(state.onWarning)state.onWarning();return state.answer;}return 0;}},
@@ -99,8 +99,8 @@ for(const name of ['../escape','C:/escape','a\\b','..'])test('unsafe listed name
 test('invalid size fails closed',()=>{const f=fixture();f.file('a',NaN);assert.throws(f.scan,/Invalid cache file size/);});
 test('excess depth fails closed',()=>{const f=fixture();let p=f.root;for(let i=0;i<66;i++){p+='/d';f.folder(p);}assert.throws(f.scan,/nested folders/);});
 test('partial removal keeps button active and reports actual remaining bytes',()=>{const f=fixture();f.file('a',100);f.file('locked',2000000,{removeFail:true});f.state.answer=1;f.clear();assert.deepEqual(f.deleted,[f.root+'/a']);assert.equal(f.button.text,'Clear cache (2.00 MB)');assert.equal(f.button.enabled,true);assert.match(f.messages[1][0],/incomplete.*1 file/);});
-test('thrown delete error still refreshes button',()=>{const f=fixture();f.file('a',100,{removeThrow:true});f.state.answer=1;f.clear();assert.equal(f.button.enabled,true);assert.equal(f.button.wm2CacheBusy,false);assert.match(f.messages[1][0],/I\/O error/);});
-test('false successful remove does not report empty',()=>{const f=fixture();f.file('a',100,{lie:true});f.state.answer=1;f.clear();assert.equal(f.button.enabled,true);assert.match(f.messages[1][0],/could not be verified/);});
+test('thrown delete error still refreshes button',()=>{const f=fixture();f.file('a',100,{removeThrow:true});f.state.answer=1;f.clear();assert.equal(f.button.enabled,true);assert.equal(f.button.wm2CacheBusy,false);assert.match(f.state.diagnostics.join("\n"),/I\/O error/);assert.match(f.messages[1][0],/cleanup was incomplete/);});
+test('false successful remove does not report empty',()=>{const f=fixture();f.file('a',100,{lie:true});f.state.answer=1;f.clear();assert.equal(f.button.enabled,true);assert.match(f.state.diagnostics.join("\n"),/could not be verified/);assert.match(f.messages[1][0],/cleanup was incomplete/);});
 test('new file while deleting kept and warned',()=>{const f=fixture();f.file('a');f.state.beforeRemove=()=>f.file('new',100);f.state.answer=1;f.clear();assert(f.entries.has(f.root+'/new'));assert.equal(f.button.enabled,true);assert.match(f.messages[1][0],/incomplete/);});
 test('nested nonempty folder after failure is kept',()=>{const f=fixture();f.folder(f.root+'/sub');f.file('sub/a',100,{removeFail:true});f.state.answer=1;f.clear();assert(f.entries.has(f.root+'/sub'));assert.equal(f.deleted.length,0);});
 test('directory removal failure remains actionable',()=>{const f=fixture();f.folder(f.root+'/sub');f.entries.get(f.root+'/sub').removeFail=true;f.state.answer=1;f.clear();assert(f.button.enabled);assert.match(f.messages[1][0],/incomplete/);});

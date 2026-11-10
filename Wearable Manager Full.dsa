@@ -2431,8 +2431,8 @@ include(sWM2ResourcesPath + "/Wearable Manager Wardrobe Bridge.dsa");
 			if (fCandidate.exists()) return err("A shell backup filename is already in use. Please retry. No wearables were moved.", false);
 			var sUVs = GetSerializedUVs(aExtraMaterials);
 			var nSaveError = oAssetIOMgr.doSaveWithOptions(oAssetIOFilter, oSettings, true, sFilePath, sBackupDirectory, "");
-			// DzAssetIOMgr returns DzError: DZ_NO_ERROR is numeric zero.
-			if (nSaveError !== 0 || !WM2ReadableBackup(fCandidate)) return err("Shell backup failed for " + oShellNode.getLabel() + " (DzError " + nSaveError + "). No wearables were moved.", false);
+			// DAZ 4 returns a wrapped DzError; DAZ 6 returns a number. Compare the numeric code.
+			if (Number(nSaveError) !== 0 || !WM2ReadableBackup(fCandidate)) return err("Shell backup failed for " + oShellNode.getLabel() + " (DzError " + nSaveError + "). No wearables were moved.", false);
 			AddStringDataToNodeEx(oShellNode, DATA_ITEM_NAME, [[SETTINGS_FILE_NAME, sFileName], [SETTINGS_UVS, sUVs], ["BackupPath", sFilePath + ".duf"]]);
 			return true;
 		} catch (e) {
@@ -2626,7 +2626,10 @@ include(sWM2ResourcesPath + "/Wearable Manager Wardrobe Bridge.dsa");
 	}
 
 	function err(sMessage, retValue) {
-		MessageBox.critical(sMessage, "Critical Error", "&OK");
+		try { print("Wearable Manager: " + sMessage); } catch (ignoreLog) {}
+        var friendly = String(sMessage).replace(/\s*\(DzError [^)]*\)/g, "");
+        friendly = friendly.replace(/Recovery remains pending\./g, "The saved recovery data has been kept. Try Put On again.");
+        MessageBox.critical(friendly, "Wearable Manager - Operation stopped", "&OK");
 		//MessageBox.critical(qsTr(sMessage), qsTr("Critical Error"), qsTr("&OK"));
 		return retValue;
 	}

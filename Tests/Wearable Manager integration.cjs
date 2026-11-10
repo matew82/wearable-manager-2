@@ -48,7 +48,7 @@ function world(source) {
   for(const n of names){try{vm.runInContext(getFunction(source,n).text,c);}catch(e){if(!String(e).includes('Missing function '))throw e;}}
   c.oRemoveQueue=new c.RemoveQueueClass();
   function metadata(n,v){let d=n.findDataItem('MatewWearables');if(!d){d=new Data('MatewWearables');n.addDataItem(d);}Object.assign(d.settings.values,v);return d.settings;}
-  function shell(n,parent,materials=['graft']){const s=new Node(n,'DzGeometryShellNode',parent);s.shape={getAllMaterials:()=>s.materials,findMaterial:name=>s.materials.find(m=>m.name===name)};s.materials=materials.map(name=>{const uv={value:name+'-uv',getStringValue(){return this.value;},setValueFromString(v){this.value=v;return true;}};return{name,properties:[['Diffuse Color','Value','Image']],getUVSetControl:()=>uv};});return s;}
+  function shell(n,parent,materials=['graft']){const s=new Node(n,'DzGeometryShellNode',parent);s.shape={getAllMaterials:()=>s.materials,findMaterial:name=>s.materials.find(m=>m.name===name)};s.materials=materials.map(name=>{const uv={value:name+'-uv',getStringValue(){return this.value;},setValueFromString(v){this.value=v;return true;}};return{name,properties:[['Diffuse Color','Value','Image']],getUVSetControl:()=>uv,getPropertyList:()=>[{name:"Diffuse Color",getLabel:()=>"Base Color",inherits:()=>true,isMappable:()=>true}]};});return s;}
   return{state,c,Node,metadata,shell};
 }
 const tests={

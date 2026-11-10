@@ -955,14 +955,13 @@
     }
     function actionFailureSummary(report) {
         if(!report)return "Wardrobe operation failed.";
-        var message=shortActionStatus(report),lines=report.lines||[];
-        for(var i=0;i<lines.length;i++){
-            var line=String(lines[i]);
-            if(line.indexOf("[FAIL]")===0){
-                message+="\n\n"+line.split("\n")[0];break;
-            }
-        }
-        if(report.outcome)message+="\n\n"+String(report.outcome).split(" Verification profile:")[0];
+        var message=shortActionStatus(report),details=(report.lines||[]).filter(function(line){return String(line).indexOf("[FAIL]")===0;}).join("\n");
+        if(/MATERIAL|GEO_SHELL/.test(details))message+="\n\nThe saved materials could not be restored or checked completely.";
+        else if(/RECOVERY|FOREIGN_STORAGE|ITEM_PLACED/.test(details))message+="\n\nAn item could not be found in its expected location. Check the figure and wardrobe storage.";
+        else if(/PROPERTY|HAND_POSE/.test(details))message+="\n\nSome saved properties or hand poses could not be restored.";
+        else message+="\n\nThe operation could not be completed.";
+        if(String(report.outcome||"").indexOf("No scene changes were made")>=0)message+="\nNo scene changes were made.";
+        else message+="\nCheck the scene before saving over your previous version.";
         return message+"\n\nOpen Settings > Last Report for details.";
     }
     function showActionFailure(report){
@@ -1113,7 +1112,7 @@
                 if(propertyText){var ps=readAppliedPropertyState(fig);propertySetID=String(ps.setID||"");propertyEntries=clonePlain(ps.entries||[]);}
                 return {valid:true,activeIDs:active,coveredIDs:Object.keys(covered),protectedGroups:protectedGroups,propertyStatePresent:!!propertyText,propertySetID:propertySetID,propertyEntries:propertyEntries,message:active.length+" registered item(s) worn. Status excludes unregistered clothes; Apply revalidates the scene."};
             },false);
-        } catch(e) { return {valid:false,activeIDs:[],message:"Scene status unavailable: "+String(e)}; }
+        } catch(e) { return {valid:false,activeIDs:[],message:"Scene status unavailable. "+userErrorText(e)}; }
     }
     function outfitMatches(st,summary) {
         // A fully present set can coexist with another fully present set
@@ -3790,7 +3789,7 @@
         var message=String(e&&e.message||e||"").replace(/^Error:\s*/,"");
         if(code&&message.indexOf(code+":")===0)message=message.slice(code.length+1).replace(/^\s+/,"");
         // Native exceptions, stacks and serialized diagnostics are not UI text.
-        if(!code||message.length>400||/file:\/\/|\n|\r|\| line |\{/.test(message))
+        if(!code||message.length>400||/file:\/\/|\n|\r|\| line |\{|Dz[A-Z]|[A-Z][A-Z0-9]+_[A-Z_]+|NodeID|PartID|schema|serialized|descriptor/i.test(message))
             return "The operation could not be completed. Technical details are in the DAZ Log.";
         return message||"The operation could not be completed. Technical details are in the DAZ Log.";
     }
@@ -5045,9 +5044,13 @@
             clearSetting(s, "NodeNames"); clearSetting(s, "MaterialNames");
             var ns = s.setSettingsValue("NodeNames"), scene = sceneNodes(), labels = {}, selectors = [String(fig.getLabel())];
             for (i = 0; i < it.parts.length; i++) { var l = String(parts[it.parts[i].id].getLabel()); selectors.push(l); ns.setStringValue(String(i), l); }
+            var labelCounts = {};
+            for (var j = 0; j < scene.length; j++) {
+                var labelKey = "$" + String(scene[j].getLabel());
+                labelCounts[labelKey] = (labelCounts[labelKey] || 0) + 1;
+            }
             for (i = 0; i < selectors.length; i++) {
-                var count = 0;
-                for (var j = 0; j < scene.length; j++) if (String(scene[j].getLabel()) === selectors[i]) count++;
+                var count = labelCounts["$" + selectors[i]] || 0;
                 if (count !== 1 || own(labels, selectors[i])) throw problem("SAVE_SELECTOR", "Ambiguous label for native save filter: " + selectors[i]);
                 labels[selectors[i]] = true;
             }
@@ -6935,7 +6938,7 @@
             cb.setFixedHeight(32);cb.checkable=true;cb.autoDefault=false;cb.checked=false;cb.enabled=ready;
             contentLayout.addWidget(cb);wardrobeTransitionStyle(cb,false,ready);
             connect(cb,"clicked()",function(){wardrobeTransitionStyle(cb,!!cb.checked,ready);});
-            cb.toolTip=ready?"Restore this item's saved material preset.":"Wear the item and save a native Material Preset first.";
+            cb.toolTip=ready?"Restore this item's saved material preset.":"Wear the item and save its materials in the Set Editor first.";
             if(ready)eligible++;
             checks.push({id:id,check:cb,ready:ready});
         })(ids[i]);
@@ -6958,9 +6961,9 @@
             chosen=selected;dlg.close();
         });
         connect(close,"clicked()",function(){dlg.close();});
-        var details=new DzPushButton(dlg);details.text="View Material Diagnostics...";details.setFixedHeight(30);
+        var details=new DzPushButton(dlg);details.text="Check Saved Materials...";details.setFixedHeight(30);
         layout.addWidget(details);details.autoDefault=false;connect(details,"clicked()",function(){
-            try{var d=diagnoseSetMaterials(st,fig);MessageBox.information(materialDiagnosticText(st,d),TITLE+" - Material Diagnostics","&OK");}
+            try{var d=diagnoseSetMaterials(st,fig);print(materialDiagnosticText(st,d));MessageBox.information("Saved materials: "+d.items+"\nMatching: "+d.matched+"\nDifferences found: "+d.changed.length+"\nUnable to check: "+(d.unavailable.length+d.incomplete.length)+"\n\nSelect worn items above to restore their saved materials.",TITLE+" - Saved Materials","&OK");}
             catch(e){MessageBox.warning(userErrorText(e),TITLE,"&OK");}
         });
         var note=label(dlg,"Material presets are backed up and verified before and after restoration.");
@@ -11674,7 +11677,7 @@
             var b=new DzPushButton(list);
             b.text=opt.name+(nameCounts[opt.name]>1?" ("+opt.id.slice(-6)+")":"");
             b.autoDefault=false;b.checkable=true;b.setFixedSize(552,30);
-            b.toolTip=opt.name+"\nRegistered item ID: "+opt.id+"\nClick to include or exclude this replacement.";
+            b.toolTip=opt.name+"\nClick to include or exclude this replacement.";
             choiceButtons.push({item:opt,button:b});
             connect(b,"clicked()",function(){
                 if(selectedIDs[opt.id])delete selectedIDs[opt.id];else selectedIDs[opt.id]=true;
@@ -12171,7 +12174,7 @@
         if(!list.length){var noProps=label(propertyContent,"No Properties");noProps.setFixedHeight(26);}
         if(wornError){
             var unavailable=label(wornContent,"Current wardrobe unavailable; Apply will verify it.");
-            unavailable.setFixedHeight(40);unavailable.toolTip=errorText(wornError);
+            unavailable.setFixedHeight(40);unavailable.toolTip=userErrorText(wornError);
         }else{
             for(i=0;i<wornItems.length;i++){
                 var wornName=label(wornContent,wornItems[i].name);
@@ -12833,7 +12836,7 @@ function WM2ResourceName(directory,name) {
             if(!file||!setPathButtonPixmap(icon,file,48,56,true,true))setPathButtonPixmap(icon,builtinIconPreviewPath("outfit"),48,56,true,true);
             var col=new DzVGroupBox(row);flattenGroupBox(col);
             var title=label(col,st.name),owner=label(col,maintenanceOwnerText(st,owners));col.minWidth=460;
-            owner.toolTip=st.scope.figureID||owner.text;
+            owner.toolTip=owner.text;
             rows.push({id:st.id,row:row,check:check,owner:owner});
             connect(check,"clicked()",refresh);
             connect(icon,"clicked()",function(){check.checked=!check.checked;refresh();});
@@ -12874,10 +12877,10 @@ function WM2ResourceName(directory,name) {
                 }finally{unlockLibrary();}
                 for(var i=0;i<rows.length;i++){
                     var r=rows[i],st=db.sets[r.id];r.check.checked=false;
-                    if(!st)r.row.hide();else{r.owner.text=maintenanceOwnerText(st,owners);r.owner.toolTip=st.scope.figureID||r.owner.text;}
+                    if(!st)r.row.hide();else{r.owner.text=maintenanceOwnerText(st,owners);r.owner.toolTip=r.owner.text;}
                 }
                 refresh();
-            }catch(e){MessageBox.warning(errorText(e),TITLE+" - Set Maintenance","&OK");}
+            }catch(e){MessageBox.warning(userErrorText(e),TITLE+" - Set Maintenance","&OK");}
         }
         connect(all,"clicked()",function(){selectAll(true);});connect(none,"clicked()",function(){selectAll(false);});
         connect(reset,"clicked()",function(){change("reset");});connect(del,"clicked()",function(){change("delete");});
@@ -13019,7 +13022,7 @@ function WM2ResourceName(directory,name) {
             return scan;
         }catch(e){
             button.text="Cache unavailable";button.enabled=false;
-            button.toolTip="Cache state could not be verified. "+errorText(e);return null;
+            button.toolTip="The material backups could not be checked. "+userErrorText(e);return null;
         }
     }
     function wm2MaterialCacheDeleteContents(scan){
@@ -13070,10 +13073,11 @@ function WM2ResourceName(directory,name) {
             var fresh=wm2MaterialCacheScan();
             if(JSON.stringify(fresh)!==JSON.stringify(scan))throw new Error("The cache changed while the warning was open. Nothing was deleted. Review its new size and try again.");
             var result=wm2MaterialCacheDeleteContents(fresh),remaining=wm2MaterialCacheButtonState(button);
+            if(result.failures.length)print(TITLE+" / CACHE_CLEANUP - "+result.failures.join("\n"));
             if(result.failures.length||!remaining||remaining.files.length||remaining.dirs.length)
                 MessageBox.warning("Cache cleanup was incomplete. "+result.removed+" file(s) removed. Remaining files were kept; the button shows their current size when readable.\n\n"+
-                    result.failures.slice(0,5).join("\n"),TITLE+" - Clear Material Cache","&OK");
-        }catch(e){MessageBox.warning(errorText(e),TITLE+" - Clear Material Cache","&OK");}
+                    "Close other operations and try again. Technical details are in the DAZ Log.",TITLE+" - Clear Material Cache","&OK");
+        }catch(e){MessageBox.warning(userErrorText(e),TITLE+" - Clear Material Cache","&OK");}
         finally{button.wm2CacheBusy=false;wm2MaterialCacheButtonState(button);}
     }
 
@@ -13105,7 +13109,7 @@ function WM2ResourceName(directory,name) {
         var manage=new DzPushButton(backupRow);manage.text="Set Maintenance...";manage.setFixedSize(165,36);manage.autoDefault=false;
         manage.enabled=!!(app.libraryPath&&app.db);
         manage.toolTip="Manage all sets in the current active library.";
-        connect(manage,"clicked()",function(){try{setMaintenanceDialog();}catch(e){MessageBox.warning(errorText(e),TITLE,"&OK");}});
+        connect(manage,"clicked()",function(){try{setMaintenanceDialog();}catch(e){MessageBox.warning(userErrorText(e),TITLE,"&OK");}});
         backupButton.text="Copy Library...";backupButton.setFixedSize(165,36);backupButton.autoDefault=false;
         backupButton.enabled=!!(app.libraryPath&&app.db);
         backupButton.toolTip="Create a verified backup of the CURRENT active library in a separate empty folder. Does not switch libraries.";
@@ -13115,7 +13119,7 @@ function WM2ResourceName(directory,name) {
                 var result=copyLibrarySnapshot(destination);
                 MessageBox.information("Library backup verified.\n\nDestination: "+result.path+
                     "\nFiles: "+result.files+" | Folders: "+result.folders+
-                    "\nBytes: "+result.bytes+" | Catalog revision: "+result.revision+
+                    "\nSize: "+(result.bytes/1000000).toFixed(2)+" MB"+
                     "\n\nThe active library and its settings were not changed.",TITLE+" - Copy Library","&OK");
             }catch(e){
                 var errText=errorText(e);
@@ -13123,7 +13127,7 @@ function WM2ResourceName(directory,name) {
                     MessageBox.warning(errText.indexOf("COPY_CANCELLED")>=0?
                         "Backup cancelled. The chosen folder may contain an incomplete copy; choose a different EMPTY folder next time.":
                         "The destination folder is no longer empty. Please choose another empty folder.",TITLE+" - Copy Library","&OK");
-                else MessageBox.critical(errText,TITLE+" - Copy Library","&OK");
+                else MessageBox.critical(userErrorText(e),TITLE+" - Copy Library","&OK");
             }
         });
 
@@ -14321,7 +14325,7 @@ function WM2ResourceName(directory,name) {
             try{
                 var p=iconPath(def);
                 if(!setPathButtonPixmap(b,p,112,112,true,true))throw problem("ICON_PREVIEW",p);
-            }catch(e){b.enabled=false;b.toolTip=def.name+" - "+errorText(e);}
+            }catch(e){b.enabled=false;b.toolTip=def.name+" - Icon unavailable";}
             connect(b,"clicked()",function(){result=clonePlain(def);dlg.close();});
         })(STANDARD_SET_ICONS[i],i);
         var footer=new DzHGroupBox(box),spacer=label(footer,""),cancel=new DzPushButton(footer);
@@ -14980,7 +14984,7 @@ function WM2ResourceName(directory,name) {
                 }
                 if(entry.missingReason){
                     try{propName.getWidget().setStyleSheet("QLabel { color: #FF5454; font-weight: bold; }");}catch(ignoreMissingColor){}
-                    propName.toolTip="Missing Property: "+entry.missingReason;
+                    propName.toolTip="This saved property is not available on the current figure or item. Choose another property or remove it.";
                     line.toolTip=propName.toolTip;
                 }
                 ae.text=overrideEditorValueText(rec.applyValue,candidate);
@@ -15025,7 +15029,7 @@ function WM2ResourceName(directory,name) {
                             if(!unavailableOverrideError(propertyError))throw propertyError;
                             entry.missingReason=String(propertyError);
                             try{entry.nameWidget.getWidget().setStyleSheet("QLabel { color: #FF5454; font-weight: bold; }");}catch(ignoreMissingColor){}
-                            entry.nameWidget.toolTip="Missing Property: "+entry.missingReason;
+                            entry.nameWidget.toolTip="This saved property is not available on the current figure or item. Choose another property or remove it.";
                         }
                     }
                     r.applyValue=parseOverrideNumber(entry.apply.text,"Apply for "+r.propertyName,candidate);
@@ -15330,7 +15334,7 @@ function WM2ResourceName(directory,name) {
         propertyIndent.setFixedWidth(130);
         propertyButton.text="Properties...";propertyButton.setFixedSize(250,32);propertyButton.autoDefault=false;
         setSourcePickerTextIcon(propertyButton,"Wearable Manager Generate32.png",250,32);
-        propertyButton.toolTip="Choose numeric or Boolean Apply/Reset overrides for the figure, an item, or a registered child Part. Per-Set part visibility is captured automatically when you Save Set.";
+        propertyButton.toolTip="Choose which properties this outfit changes and what values to restore when it is removed. Visibility is saved with the set.";
         setPropertyColumn.insideSpacing=0;
         var handTopGap=label(setPropertyColumn,"");handTopGap.setFixedHeight(5);
         var handRow=new DzWidget(setPropertyColumn),handLayout=new DzHBoxLayout(handRow);
@@ -16225,7 +16229,7 @@ function WM2ResourceName(directory,name) {
             takeOffAll.text=recoverableComposite?"                  Resolve Changed Wearable...":
                 "Take Off All"+(summary.valid&&summary.activeIDs.length?" ("+summary.activeIDs.length+")":"");
             takeOffAll.toolTip=recoverableComposite?
-                "Create a new registered variant for the changed child hierarchy; active old-item Overrides can be safely reset with confirmation. Ordinary Take Off All remains unavailable until the hierarchy is valid.":
+                "This wearable has changed. Review its attached items before taking it off.":
                 "Store all currently worn registered items for the selected figure.";
             create.enabled=registered.enabled=!!fig&&!busy;
             editFigureIcon.enabled=!!fig&&!isStandardFigureLabel(fig)&&!busy;
@@ -16359,7 +16363,7 @@ function WM2ResourceName(directory,name) {
                 // Re-adding existing Qt layout children moves them without recreating controls.
                 for(var i=0;i<cards.length;i++)cardLayout.addWidget(cards[i].group);
                 updateOrderButtons();
-            }catch(e){MessageBox.warning(errorText(e),TITLE+" - Set Order","&OK");}
+            }catch(e){MessageBox.warning(userErrorText(e),TITLE+" - Set Order","&OK");}
         }
         function readSceneStatus(){
             // One read scope for summary inventory + Worn-card material/property
@@ -16522,7 +16526,7 @@ function WM2ResourceName(directory,name) {
             partiallyVerifiedRow.setFixedHeight(22);
             var partiallyVerifiedLabel=label(partiallyVerifiedRow,"Worn \u00B7 Partially Verified");
             partiallyVerifiedLabel.setFixedWidth(245);
-            partiallyVerifiedLabel.toolTip="Some shader fields cannot be verified. See Settings > Last Report for technical diagnostics.";
+            partiallyVerifiedLabel.toolTip="Some material settings could not be checked. Open Settings > Last Report for details.";
             try{partiallyVerifiedLabel.getWidget().setStyleSheet("QLabel { color: #BCD967; font-weight: bold; }");}catch(ignorePartialStyle){}
             partiallyVerifiedRow.hide();
             // Keep wardrobe-worn and property-state status independent. Restore
@@ -16822,7 +16826,7 @@ function WM2ResourceName(directory,name) {
     }
     g_matewWardrobeSetsPrototypeBusy = true;
     try { main(); }
-    catch (fatal) { print(TITLE + ": " + errorText(fatal)); MessageBox.critical(errorText(fatal), TITLE, "&OK"); }
+    catch (fatal) { print(TITLE + ": " + errorText(fatal)); MessageBox.critical(userErrorText(fatal), TITLE, "&OK"); }
     finally {
         try { if(viewportLocksOwned) releaseWardrobeViewportLocks("script_finally"); }
         finally { try { closeChannelSession(); releaseBulkBindings(); releasePropertyHelper(); } finally { readScope=null;g_matewWardrobeSetsPrototypeBusy=false; } }
