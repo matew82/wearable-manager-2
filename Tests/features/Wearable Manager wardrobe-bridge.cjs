@@ -40,7 +40,7 @@ for(const where of ['preferences','catalog'])test('forked '+where+' suppress bad
 for(const field of ['format','schemaVersion','libraryID','revision','commitID'])test('catalog mismatch '+field+' cannot manufacture a badge',()=>{const f=fixture();f.db[field]=field==='schemaVersion'||field==='revision'?99:'invalid';f.put(lib+'/Catalog/'+catalogName,f.db);assert.equal(f.make().info(registered()),null);});
 test('unavailable library does not create replacement folders or lose scene metadata',()=>{const f=fixture(),n=registered(),before=JSON.stringify(n.own);f.disk.delete(lib+'/library.json');assert.equal(f.make().info(n),null);assert.equal(JSON.stringify(n.own),before);assert.equal(f.events.messages.length,1);});
 test('catalog snapshot is reused in a dialog and refreshed for the next opening',()=>{const f=fixture(),first=f.make();assert.equal(first.info(registered()).names.length,2);f.db.revision=3;f.db.commitID='matew_commit3';f.db.sets={};f.put(lib+'/Catalog/rev_0000000003_matew_commit3.json',f.db);assert.equal(first.info(registered()).names.length,2);assert.equal(f.make().info(registered()),null);});
-for(const file of ['Wearable Manager Menu.dsa','Wearable Manager Full.dsa'])test(file+' installs one bridge in shared row rendering',()=>{const s=read(file);assert(s.includes('include(sWM2ResourcesPath + "/Wearable Manager Wardrobe Bridge.dsa")'));assert.equal((s.match(/WM2WardrobeBridge.create\(PATH_ICONS\)/g)||[]).length,1);assert(getFunction(s,'AddTagImages').text.includes('oWardrobeBadges.add(oContainer, oLayout, oWearable)'));});
+for(const file of ['Wearable Manager Menu.dsa','Wearable Manager Full.dsa'])test(file+' installs one bridge in shared row rendering',()=>{const s=read(file);assert.equal((s.match(/WM2CreateWardrobeBadges\(PATH_ICONS\)/g)||[]).length,1);const embedded=getFunction(s,'WM2CreateWardrobeBadges').text;assert(embedded.replace(/^\t\t/gm,'').replace(/\r/g,'').includes(bridge.trim().replace(/\r/g,'')));assert(!embedded.includes('loadFromFile('));assert(getFunction(s,'AddTagImages').text.includes('oWardrobeBadges.add(oContainer, oLayout, oWearable)'));});
 function supportContext(){const c=vm.createContext({});vm.runInContext(support,c);return c;}
 test('active Wardrobe registration and inert WM identity metadata remain compatible',()=>{const c=supportContext(),n=registered(),owner=node({Schema:'1',Role:'Figure'});assert.equal(c.WM2Support.wardrobeTransferIssue(n,owner),'');assert.doesNotThrow(()=>c.WM2Support.requireWardrobeTransfers(owner,[n]));});
 for(const field of ['Recovery','GeoWardrobeSnapshot','Pending'])test('WM refuses pending Wardrobe '+field+' in a composite child',()=>{const c=supportContext(),child=registered({[field]:'saved'}),parent=node(null,null,[child]),before=JSON.stringify(child.own);assert.throws(()=>c.WM2Support.requireWardrobeTransfers(node(null),[parent]),/Wardrobe/);assert.equal(JSON.stringify(child.own),before);});
@@ -71,7 +71,14 @@ test('Wardrobe ignores WM storage and accepts the same item after Put On',()=>{
 });
 test('Wardrobe stops before main when a WM dialog is open, and preserves the other lock',()=>{
  const marker=wardrobe.indexOf('// TEST_ENTRY_POINT:'),tail=wardrobe.slice(marker,wardrobe.lastIndexOf('})();'));
- let calls=0;const c=vm.createContext({g_matewWearablesStatus:1,main(){calls++;},TITLE:'Wardrobe',MessageBox:{warning(){calls++;}}});
+ let calls=0;const c=vm.createContext({serviceMode:false,g_matewWearablesStatus:1,main(){calls++;},TITLE:'Wardrobe',MessageBox:{warning(){calls++;}}});
  vm.runInContext('(function(){'+tail+'})()',c);assert.equal(calls,1);assert.equal(c.g_matewWearablesStatus,1);assert.equal(c.g_matewWardrobeSetsPrototypeBusy,undefined);
+});
+for(const file of ['Wearable Manager Menu.dsa','Wearable Manager Full.dsa'])test(file+' creates embedded badges without external script loading',()=>{
+ const f=fixture();
+ vm.runInContext(getFunction(read(file),'WM2CreateWardrobeBadges').text,f.c);
+ const b=f.c.WM2CreateWardrobeBadges('/Resources');
+ assert.equal(b.info(node(null)),null);
+ assert.deepEqual(plain(b.info(registered()).names),['Everyday','Travel & <Summer>']);
 });
 console.log(JSON.stringify({passed,failed:failures.length,nativeDAZ:false,failures},null,2));if(failures.length)process.exitCode=1;

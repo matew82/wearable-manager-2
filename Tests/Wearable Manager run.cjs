@@ -27,6 +27,11 @@ for(const file of files){
 }
 for(const file of settingsFiles)new vm.Script(fs.readFileSync(path.join(root,file),'utf8'),{filename:file});
 const suites=[
+ ['features/Wearable Manager register-matches.cjs'],
+ ['features/Wearable Manager maintenance-attach.cjs'],
+ ['features/Wearable Manager service.cjs'],
+ ['features/Wearable Manager parent-variant.cjs'],
+ ['features/Wearable Manager maintenance-delete.cjs'],
  ['features/Wearable Manager final-audit.cjs'],
  ['features/Wearable Manager hand-poses.cjs'],
  ['features/Wearable Manager property-ui.cjs'],

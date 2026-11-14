@@ -1,0 +1,92 @@
+Wearable Manager 2 - Script Service (API version 1)
+
+Developers may use this interface to integrate WM2 with their own products,
+including commercial products. Written notification to the author is not required.
+WM2 must be installed and its Wardrobe library must already be configured.
+
+Entry point: Wearable Manager Service.dse, beside Wearable Manager Wardrobe.dse.
+Call DzScript.execute([characterLabel, outfitNameOrID, action, output]).
+output is a DzSettings instance supplied by the caller (required for list sets).
+On success, parse JSON.parse(String(output.getStringValue("result"))).
+This works in DAZ 4 and 6; do not rely on DzScript.result() in DAZ 6.
+Legacy three-string action calls remain supported without a result container.
+execute() returns false on failure; read errorMessage() and do not read a stale result.
+
+1. characterLabel: exact scene figure label, including any numbered suffix.
+   Empty string uses the primary selected supported figure or the supported
+   figure owning the primary selected bone.
+2. outfitNameOrID: empty for list sets; exact outfit name for put on/take off;
+   ID returned by list sets for put on by id/take off by id.
+3. action (case-insensitive):
+   list sets       - list outfits available to the target figure, without changes.
+   put on          - apply by exact outfit name.
+   take off        - remove by exact outfit name.
+   put on by id    - apply by set ID (recommended for integrations).
+   take off by id  - remove by set ID (recommended for integrations).
+
+Example helper (servicePath must be the resolved installed path):
+function callWM2(servicePath, characterLabel, outfit, action) {
+    var service = new DzScript();
+    var output = new DzSettings();
+    try {
+        if (!service.loadFromFile(servicePath))
+            throw new Error(service.errorMessage());
+        if (!service.execute([characterLabel, outfit, action, output]))
+            throw new Error(service.errorMessage());
+        return JSON.parse(String(output.getStringValue("result")));
+    } finally {
+        service.deleteLater();
+        output.deleteLater();
+    }
+}
+var available = callWM2(servicePath, "", "", "list sets");
+// Present available.sets in your product's outfit picker.
+// After the user chooses an entry:
+// var result = callWM2(servicePath, "", chosen.id, "put on by id");
+// var result = callWM2(servicePath, "", chosen.id, "take off by id");
+
+List result:
+{
+  "apiVersion": 1,
+  "ok": true,
+  "action": "list sets",
+  "libraryID": "...",
+  "figure": {"label": "Helen", "type": "Genesis9"},
+  "sets": [{"id": "...", "name": "My Outfit", "groupID": "...", "groupName": "Clothing"}]
+}
+Sets are sorted by name (ID breaks ties). The implicit Default group has an empty
+ID and the name Default. An empty sets array is a successful result, not an error.
+The list respects figure type, exact-label rules including numbered copies, and
+Specific Figure bindings. Main-dialog search/group filters do not limit it.
+Listing does not apply clothing, create figure tags, or alter scene selection.
+Availability does not guarantee that all required files/properties are present;
+the normal checks run when an outfit is applied.
+
+IDs remain usable when outfits are renamed; they are scoped to the active library.
+Refresh the list if the library, scene selection or figure changes, or a set is
+deleted/rebound. Do not reuse cached IDs with a different libraryID.
+Duplicate compatible outfit names make name-based calls fail; use IDs instead.
+
+Successful action result contains apiVersion, ok, action, libraryID, figure,
+set:{id,name}, reportPath, warningCount and warnings (array of strings).
+Non-fatal warnings can accompany success; show them in your product as appropriate.
+The report path is also printed to the DAZ log. On failure, execute() is false
+and errorMessage() describes the failure; no JSON success result is guaranteed.
+
+Put On follows the saved group replacement and compatibility rules.
+Take Off uses Wardrobe's set-specific removal action, stores worn members,
+and follows existing property/hand reset rules. It does not delete clothing.
+A set with no worn members returns an error.
+
+Close other Wearable Manager / Wardrobe dialogs before invoking the service.
+The service uses Wardrobe's active library and configured operational preferences.
+It opens no main Wardrobe window or final success dialog. Keyboard modifiers and
+UI auto-close preferences do not affect service calls. Native import, AutoFit or
+required safety dialogs can still appear: this is not an unattended batch API.
+Unknown figures, unsupported selections, missing/incompatible sets and ambiguous
+labels/names fail without guessing. No new library is created.
+Scene operations use Wardrobe's verification, rollback and Undo handling.
+The service never saves the scene automatically.
+
+DAZ API reference:
+https://docs.daz3d.com/public/software/dazstudio/4/referenceguide/scripting/api_reference/object_index/script_dz

@@ -1,0 +1,28 @@
+// Public WM2 service entry. execute([characterLabel, outfitName, action]).
+// An empty character label uses the selected figure or its selected bone.
+// This script delegates to Wardrobe's normal transactional action engine.
+(function () {
+    var args=getArguments();
+    if(args.length!==3&&args.length!==4)throw new Error("WM2 Service expects [characterLabel, outfitNameOrID, action].");
+    for(var i=0;i<3;i++)if(typeof args[i]!=="string")throw new Error("All three WM2 Service arguments must be strings.");
+    var output=args.length===4?args[3]:null;
+    if(output&&(typeof output.setStringValue!=="function"||typeof output.getStringValue!=="function"))
+        throw new Error("The optional fourth argument must be a DzSettings result container.");
+    if(args.length===4&&!output)throw new Error("The result container must not be null.");
+    if(String(args[2]).replace(/^\s+|\s+$/g,"").toLowerCase()==="list sets"&&!output)
+        throw new Error("Pass a DzSettings result container as the fourth argument for 'list sets'.");
+    if(output)output.setStringValue("result","");
+    var info=new DzFileInfo(getScriptFileName()),directory=String(info.path());info.deleteLater();
+    var path=directory+"/Wearable Manager Wardrobe.dse",check=new DzFileInfo(path);
+    try{if(!check.exists())path=directory+"/Wearable Manager Wardrobe.dsa";}finally{check.deleteLater();}
+    var script=new DzScript();
+    try{
+        if(!script.loadFromFile(path))throw new Error("Cannot load Wardrobe: "+script.errorMessage());
+        var forwarded=["--wm2-service-v1",args[0],args[1],args[2]];
+        if(output)forwarded.push(output);
+        if(!script.execute(forwarded))
+            throw new Error("WM2 Service failed: "+script.errorMessage());
+        // JSON crosses DAZ script contexts without retaining native objects.
+        return output?String(output.getStringValue("result")):String(script.result());
+    }finally{script.deleteLater();}
+})();

@@ -13,7 +13,6 @@
 var sWM2ResourcesPath = new DzFileInfo(getScriptFileName()).path() + "/Resources";
 include(sWM2ResourcesPath + "/Wearable Manager Support.dsa");
 include(sWM2ResourcesPath + "/Wearable Manager Settings UI.dsa");
-include(sWM2ResourcesPath + "/Wearable Manager Wardrobe Bridge.dsa");
 
 (function () {
 	// Qt 6 uses a small default iconSize even when pixmap is larger.
@@ -2888,8 +2887,139 @@ include(sWM2ResourcesPath + "/Wearable Manager Wardrobe Bridge.dsa");
 
 
 
+	function WM2CreateWardrobeBadges(resourcePath) {
+		// Embedded from Resources/Wearable Manager Wardrobe Bridge.dsa.
+		// Read-only Wardrobe membership badges. One lazy catalog snapshot per dialog.
+		// Does not include/run Wardrobe, create folders, write preferences or change Scene.
+		var WM2WardrobeBridge = (function () {
+		    function own(o,k) { return Object.prototype.hasOwnProperty.call(o,k); }
+		    function object(o) { return !!o && typeof o === "object" && !Array.isArray(o); }
+		    function id(s) { return typeof s === "string" && /^matew_[a-zA-Z0-9_]+$/.test(s); }
+		    function read(path,limit) {
+		        var file=new DzFile(path),opened=false;
+		        try {
+		            file.setCaching(false);
+		            var size=file.size();
+		            if(!file.exists()||!file.isFile()||typeof size!=="number"||!isFinite(size)||size<1||size>limit)
+		                throw new Error("Wardrobe file is missing or exceeds the badge reader limit: "+path);
+		            if(file.open(DzFile.ReadOnly)!==true)throw new Error("Cannot read "+path);
+		            opened=true;var raw=file.read();
+		            if(typeof raw!=="string"||raw.length>limit||file.size()!==size)
+		                throw new Error("Wardrobe file changed while reading: "+path);
+		            var code=file.error(),expected=DzFile.NoError;
+		            if(code&&typeof code.valueOf==="function")code=code.valueOf();
+		            if(expected&&typeof expected.valueOf==="function")expected=expected.valueOf();
+		            if(typeof code!=="number"||typeof expected!=="number"||code!==expected)
+		                throw new Error("Cannot read complete Wardrobe file: "+path);
+		            return JSON.parse(raw.replace(/^\ufeff/,""));
+		        } finally { if(opened)file.close();file.deleteLater(); }
+		    }
+		    function latest(directory,pattern,expression,optional) {
+		        var dir=new DzDir(directory);
+		        try {
+		            if(!dir.exists()&&optional)return null;
+		            if(!dir.exists()||!dir.isReadable())throw new Error("Wardrobe directory unavailable: "+directory);
+		            var names=dir.entryList(pattern,DzDir.Files,DzDir.Name),count=names&&names.length;
+		            if(typeof count!=="number"||count<0||count>100000||Math.floor(count)!==count)
+		                throw new Error("Wardrobe revision list is unavailable or too large.");
+		            var best=null,seen={};
+		            for(var i=0;i<count;i++){
+		                var name=String(names[i]),m=expression.exec(name);
+		                if(!m)throw new Error("Invalid Wardrobe revision filename: "+name);
+		                var revision=Number(m[1]),token="@"+m[1];
+		                if(own(seen,token))throw new Error("Conflicting Wardrobe revisions: "+m[1]);
+		                seen[token]=true;
+		                if(!best||revision>best.revision)best={name:name,revision:revision,commit:m[2]||""};
+		            }
+		            if(!best&&!optional)throw new Error("No Wardrobe catalog revision found.");
+		            return best;
+		        } finally { dir.deleteLater(); }
+		    }
+		    function indexCatalog(db,header,revision) {
+		        if(!object(header)||header.format!=="matew.wardrobe.sets"||header.schemaVersion!==1||!id(header.libraryID)||
+		           !object(db)||db.format!==header.format||db.schemaVersion!==1||db.libraryID!==header.libraryID||
+		           db.revision!==revision.revision||db.commitID!==revision.commit||!object(db.items)||!object(db.sets))
+		            throw new Error("Wardrobe catalog identity/schema mismatch.");
+		        var index={},ids=Object.keys(db.sets);
+		        if(ids.length>100000)throw new Error("Too many Wardrobe sets for badges.");
+		        for(var i=0;i<ids.length;i++){
+		            var st=db.sets[ids[i]];
+		            if(!id(ids[i])||!object(st)||st.id!==ids[i]||typeof st.name!=="string"||!st.name||!Array.isArray(st.items)||st.items.length>20000)
+		                throw new Error("Invalid Wardrobe set membership.");
+		            var seen={};
+		            for(var j=0;j<st.items.length;j++){
+		                var itemID=st.items[j];
+		                if(!id(itemID)||!own(db.items,itemID)||own(seen,itemID))throw new Error("Invalid Wardrobe set item.");
+		                seen[itemID]=true;var item=db.items[itemID];
+		                if(!object(item)||item.id!==itemID||!id(item.variantID)||!Array.isArray(item.parts)||!item.parts.length||item.parts.length>20000)
+		                    throw new Error("Invalid Wardrobe item identity.");
+		                if(!own(index,itemID)){
+		                    var parts={};
+		                    for(var p=0;p<item.parts.length;p++){
+		                        var part=item.parts[p];
+		                        if(!object(part)||!id(part.id)||own(parts,part.id))throw new Error("Invalid Wardrobe part identity.");
+		                        parts[part.id]=part.root===true?"ItemRoot":"Part";
+		                    }
+		                    index[itemID]={variant:item.variantID,parts:parts,names:[]};
+		                }
+		                index[itemID].names.push(st.name);
+		            }
+		        }
+		        for(var itemKey in index)if(own(index,itemKey))index[itemKey].names.sort();
+		        return {libraryID:db.libraryID,items:index};
+		    }
+		    function load() {
+		        var prefs=String(App.getAppDataPath())+"/matew/WardrobeSetsPrototype";
+		        var selected=latest(prefs,"settings_*.json",/^settings_(\d{10})_.*\.json$/,true);
+		        if(!selected)return null;
+		        var settings=read(prefs+"/"+selected.name,1048576);
+		        if(!object(settings)||settings.schemaVersion!==1||settings.revision!==selected.revision||typeof settings.libraryPath!=="string")
+		            throw new Error("Unsupported Wardrobe preferences.");
+		        if(!settings.libraryPath)return null;
+		        var base=settings.libraryPath.replace(/[\\/]+$/,"");
+		        var header=read(base+"/library.json",1048576);
+		        var revision=latest(base+"/Catalog","rev_*.json",/^rev_(\d{10})_([a-zA-Z0-9_]+)\.json$/,false);
+		        return indexCatalog(read(base+"/Catalog/"+revision.name,67108864),header,revision);
+		    }
+		    function escape(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+		    function create(resources) {
+		        var loaded=false,catalog=null,pixmap=null,imageAttempted=false,notice="";
+		        function info(node) {
+		            try {
+		                var data=node&&node.findDataItem("matewWardrobeSets_v1");if(!data)return null;
+		                var settings=data.getSettings(),schema=settings.getStringValue("Schema",""),role=settings.getStringValue("Role","");
+		                if(schema!=="1"||(role!=="ItemRoot"&&role!=="Part"))return null;
+		                if(!loaded){loaded=true;catalog=load();}
+		                if(!catalog||settings.getStringValue("LibraryID","")!==catalog.libraryID)return null;
+		                var itemID=settings.getStringValue("ItemID",""),partID=settings.getStringValue("PartID","");
+		                if(!own(catalog.items,itemID))return null;
+		                var entry=catalog.items[itemID];
+		                if(settings.getStringValue("VariantID","")!==entry.variant||!own(entry.parts,partID)||entry.parts[partID]!==role)return null;
+		                return {names:entry.names.slice(0),tooltip:"<qt><b>Wardrobe sets</b><br>"+entry.names.map(escape).join("<br>")+"<br><br>Stored items must be returned using the manager that stored them.</qt>"};
+		            } catch(e) {
+		                if(!notice){notice=String(e);print("Wearable Manager: Wardrobe badges unavailable: "+notice);}
+		                return null;
+		            }
+		        }
+		        return {info:info,add:function(parent,layout,node){
+		            var membership=info(node);if(!membership)return false;
+		            if(!imageAttempted){
+		                imageAttempted=true;pixmap=new Pixmap(resources+"/Wearable Manager Worn.png");
+		                if(!pixmap||pixmap.isNull()){pixmap=null;return false;}
+		                pixmap.resize(24,24);
+		            }
+		            if(!pixmap)return false;
+		            var badge=new DzLabel(parent);badge.setFixedSize(24,24);badge.pixmap=pixmap;badge.toolTip=membership.tooltip;
+		            layout.addWidget(badge);layout.addSpacing(7);return true;
+		        }};
+		    }
+		    return {create:create};
+		})();
+		return WM2WardrobeBridge.create(resourcePath);
+	}
+
 	function ShowWearablesDialog(oHumanFigure, oGroup) {
-		var oWardrobeBadges = WM2WardrobeBridge.create(PATH_ICONS);
+		var oWardrobeBadges = WM2CreateWardrobeBadges(PATH_ICONS);
 
 		var dir_icons = new DzDir(PATH_ICONS);
 		var pixImageEmpty = new Pixmap(dir_icons.filePath(WM2ResourceName(dir_icons,"Wearable Manager - Empty.png")));

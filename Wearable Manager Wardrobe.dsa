@@ -877,7 +877,7 @@
         return out;
     }
     function uiSettingsSnapshot() {
-        return {schemaVersion:3,cardSort:app.cardSort||"id",verificationMode:app.verificationMode,optimizeReads:app.optimizeReads,
+        return {schemaVersion:3,cardSort:app.cardSort||"id",groupFilterID:app.groupFilterID||"__all__",verificationMode:app.verificationMode,optimizeReads:app.optimizeReads,
             bulkChannels:app.bulkChannels,reuseChannelBindings:app.reuseChannelBindings,
             blockViewportRedraw:app.blockViewportRedraw,experimentalGeoShellRecovery:app.experimentalGeoShellRecovery,debugMode:app.debugMode,closeAfterApply:app.closeAfterApply,showSuccessReports:app.showSuccessReports,
             onlyCompatible:true,
@@ -903,6 +903,7 @@
         next.figureIconBindings=ui.schemaVersion>=3 && own(ui,"figureIconBindings") ?
             validateFigureIconBindings(clonePlain(ui.figureIconBindings)) : {specific:{},label:{}};
         if(own(ui,"cardSort"))app.cardSort=ui.cardSort==="name"?"name":"id";
+        app.groupFilterID=typeof ui.groupFilterID==="string" && ui.groupFilterID ? ui.groupFilterID : "__all__";
         app.verificationMode=next.verificationMode;
         for (var j=0;j<names.length;j++) app[names[j]]=next[names[j]];
         app.figureProfiles=defaultFigureProfiles();
@@ -4247,8 +4248,8 @@
         // Validate native links of every surviving saved part. Native-link
         // targets that referred to removed parts must fail closed rather than
         // silently being replaced with a different node.
-        if(!missing.length)nativeLinkCheck(it,{parts:parts},fig);
-        else for(i=0;i<it.parts.length;i++){
+        var rootParentChange=null,rootParentLabel="";
+        for(i=0;i<it.parts.length;i++){
             var spec=it.parts[i],present=parts[spec.id];if(!present)continue;
             var actual=nodeReferences(present);
             for(var r=0;r<REF_FIELDS.length;r++){
@@ -4256,12 +4257,21 @@
                 try{matches=portableLinkMatches(spec,field,actual[field],fig,parts,actual.follow);}
                 catch(dependencyError){throw problem("COMPOSITE_MISSING_DEPENDENCY",
                     "A remaining part still references a removed wearable child: "+spec.name+" / "+field);}
+                if(!matches&&spec.root===true&&field==="parent"&&
+                        ["none","figure","figure-bone"].indexOf(spec.refs.parent.kind)>=0){
+                    var parentRef=portableRef(actual.parent,fig,parts);
+                    if(parentRef.kind==="figure"||parentRef.kind==="figure-bone"){
+                        rootParentChange={nodeKey:key(actual.parent),ref:parentRef};
+                        rootParentLabel=String(actual.parent.getLabel());
+                        continue;
+                    }
+                }
                 if(!matches)throw problem("COMPOSITE_LINK_CHANGED",
                     "A saved native link changed on "+spec.name+" / "+field+
                     ". Restore the original link before creating a variant.");
             }
         }
-        if(!extras.length&&!missing.length)return null;
+        if(!extras.length&&!missing.length&&!rootParentChange)return null;
         // Changes may consist of additions, removals, or a replacement of a
         // previously saved child. Never overwrite a registered definition.
         if(value(root,"Pending"))throw problem("COMPOSITE_PENDING","The source item has an unfinished transaction.");
@@ -4282,6 +4292,7 @@
         return {rootKey:key(root),itemID:it.id,instanceID:d.InstanceID,
             activeOverrideCount:activeOverrideCount,
             activeOverrideSnapshot:jsonText(activeOverrideRows),
+            rootParentChange:rootParentChange,rootParentLabel:rootParentLabel,
             originalName:it.name,extraKeys:extras.map(function(n){return key(n);}),
             extraLabels:extras.map(function(n){return String(n.getLabel());}),
             missingPartIDs:missing.map(function(p){return p.id;}),
@@ -4359,17 +4370,21 @@
             "Old PartID no longer exists in the scene; its obsolete applied override reference was cleared. No property was written to a replacement child.");
     }
 
+    function compositeVariantScanMatches(scan,payload){
+        return !!scan&&scan.itemID===payload.itemID&&scan.instanceID===payload.instanceID&&
+            closeNumbers(scan.extraKeys,payload.extraKeys)&&
+            closeNumbers(scan.missingPartIDs,payload.missingPartIDs)&&
+            closeNumbers(scan.rootParentChange||null,payload.rootParentChange||null)&&
+            scan.activeOverrideCount===payload.activeOverrideCount&&
+            scan.activeOverrideSnapshot===payload.activeOverrideSnapshot;
+    }
     function createCompositeVariant(fig,payload){
         requireUnscoped("createCompositeVariant");
         frameGuard();assertNoPending(fig);
         var root=live(payload.rootKey);
         if(!root)throw problem("COMPOSITE_ROOT_MISSING","Reopen the editor; the registered root was removed.");
         var scan=withReadScope(function(){return inspectCompositeAddition(fig,root,app.db);},false);
-        if(!scan||scan.itemID!==payload.itemID||scan.instanceID!==payload.instanceID||
-            !closeNumbers(scan.extraKeys,payload.extraKeys)||
-            !closeNumbers(scan.missingPartIDs,payload.missingPartIDs)||
-            scan.activeOverrideCount!==payload.activeOverrideCount||
-            scan.activeOverrideSnapshot!==payload.activeOverrideSnapshot)
+        if(!compositeVariantScanMatches(scan,payload))
             throw problem("COMPOSITE_CHANGED","The wearable or its active overrides changed during confirmation. Reopen the dialog; nothing was modified.");
         foreignDataGuard(root,true);
         var old=app.db.items[scan.itemID],all=nonBones(root),owner=figureIdentity(fig,false),parts={};
@@ -4394,7 +4409,8 @@
         var baseline=clonePlain(measured(all.map(function(n){return key(n);}),true)),
             next=clonePlain(app.db),itemID=unique("item"),variant=unique("variant"),instance=unique("instance");
         var displayName=old.name+(scan.extraLabels.length?" + "+scan.extraLabels.join(" + "):
-            " (without "+scan.missingLabels.join(" + ")+")");
+            (scan.missingLabels.length?" (without "+scan.missingLabels.join(" + ")+")":""))+
+            (scan.rootParentChange?" (attached to "+scan.rootParentLabel+")":"");
         if(displayName.length>160)displayName=displayName.slice(0,157)+"...";
         var record={id:itemID,variantID:variant,name:displayName,figureType:String(fig.objectName),
             parts:[],created:String(new Date()),preset:"Items/"+variant+".duf"};
@@ -8516,16 +8532,13 @@
         }
     }
     function setPropertyOverrideNativeValue(p,want) {
-        // Overrides store evaluated native values (getValue), not raw values.
-        // Fitted scale multiplies the raw value by the figure's scale; setValue
-        // alone does not compensate for that native transform contribution.
-        if(typeof DzFloatProperty!=="undefined" && typeof p.getTransformType==="function" &&
-                p.getTransformType()===DzFloatProperty.SCALE &&
-                typeof p.adjustValue==="function") {
+        // Overrides store the evaluated value shown by DAZ. Float setValue
+        // writes the local value: ERC contributions (not only fitted scale)
+        // must be removed by DAZ's native adjustment before writing it.
+        // Int/Bool setters retain their own controller-aware semantics.
+        if(typeof p.getTransformType==="function" && typeof p.adjustValue==="function") {
             var raw=Number(p.adjustValue(want));
-            if(!isFinite(raw))throw problem("PROPERTY_VALUE","Non-finite adjusted scale value.");
-            // DAZ 6 omits setRawValue; its scale setValue accepts the raw
-            // transform value as well. Verify the evaluated result at caller.
+            if(!isFinite(raw))throw problem("PROPERTY_VALUE","Non-finite adjusted property value.");
             if(typeof p.setRawValue==="function")p.setRawValue(raw);
             else p.setValue(raw);
         } else p.setValue(want);
@@ -9279,6 +9292,55 @@
             return matches;
         }, false);
     }
+    function registerConfirmedMatches(payload,fig){
+        if(!payload||payload.commitID!==app.db.commitID)throw new Error("The library changed. Review the matching items again.");
+        var st=app.db.sets[payload.id];if(!st||scopeProblem(st,fig))throw new Error("This outfit is no longer available to the selected figure.");
+        var approved=payload.matches||[],fresh=possibleUnregisteredLabelMatches(st,fig),plans=[],usedItems={},usedNodes={};
+        if(!approved.length||approved.length!==fresh.length)throw new Error("The matching items changed. Review them again.");
+        var inv=inventory(fig,app.db);
+        for(var i=0;i<approved.length;i++){
+            var match=approved[i],current=fresh.filter(function(x){return x.itemID===match.itemID&&x.runtimeKey===match.runtimeKey&&x.candidateLabel===match.candidateLabel;});
+            if(current.length!==1)throw new Error("The matching items changed. Review them again.");
+            if(usedItems[match.itemID])throw new Error("More than one object matches "+match.itemName+". Give the intended objects distinct labels before registering.");
+            usedItems[match.itemID]=true;
+            if(inv[match.itemID])throw new Error(match.itemName+" already has a registered instance for this figure. Resolve that instance before registering another.");
+            var item=app.db.items[match.itemID],root=live(match.runtimeKey);
+            if(!item||!root||item.figureType!==String(fig.objectName))throw new Error("A matching item is no longer available.");
+            foreignDataGuard(root,false);
+            var nodes=nonBones(root),parts={},usedParts={};
+            if(nodes.length!==item.parts.length)throw new Error("Cannot register "+item.name+": its attached parts differ from the saved item.");
+            for(var j=0;j<item.parts.length;j++){
+                var spec=item.parts[j],candidatesForPart=[];
+                for(var n=0;n<nodes.length;n++){
+                    var node=nodes[n];
+                    if(String(node.className())!==spec.className||!!spec.root!==same(node,root))continue;
+                    if(!spec.root&&numberedLabelBase(String(node.getLabel()))!==numberedLabelBase(spec.name))continue;
+                    candidatesForPart.push(node);
+                }
+                if(candidatesForPart.length!==1)throw new Error("Cannot identify the saved part uniquely: "+item.name+" / "+spec.name);
+                var part=candidatesForPart[0],nodeKey=key(part);
+                if(usedNodes[nodeKey]||usedParts[nodeKey]||dataObject(part))throw new Error("An object is already registered or matches more than one saved part: "+part.getLabel());
+                usedParts[nodeKey]=true;parts[spec.id]=part;
+            }
+            nativeLinkCheck(item,{root:root,parts:parts},fig);
+            Object.keys(usedParts).forEach(function(k){usedNodes[k]=true;});
+            plans.push({item:item,root:root,parts:parts});
+        }
+        // Validate the entire confirmed batch before adding any persistent tags.
+        var owner=figureIdentity(fig,true);
+        for(var pi=0;pi<plans.length;pi++){
+            var plan=plans[pi],instance=unique("instance");
+            for(var si=0;si<plan.item.parts.length;si++){
+                var saved=plan.item.parts[si],target=plan.parts[saved.id];uniqueNodeID(target,true);
+                txData(target,{Schema:"1",LibraryID:app.db.libraryID,ItemID:plan.item.id,VariantID:plan.item.variantID,
+                    PartID:saved.id,InstanceID:instance,OwnerFigureID:owner,Role:saved.root?"ItemRoot":"Part"});
+            }
+            inspectInstance(plan.item,plan.root);
+            log("PASS","MATCH_REGISTERED",plan.item.name+": user-confirmed existing object; saved definition unchanged.");
+        }
+        inventory(fig,app.db);
+        ctx.outcome="Registered "+plans.length+" matching item(s). Save the scene to keep their registration.";
+    }
     function confirmPossibleUnregisteredLabelMatches(st, fig) {
         var matches = possibleUnregisteredLabelMatches(st, fig);
         if (!matches.length) return {accepted:true,matches:[]};
@@ -9287,10 +9349,11 @@
         for (var i = 0; i < max; i++) lines.push("- " + matches[i].candidateLabel + "  <->  " + matches[i].itemName +
             (matches[i].referenceManagerData ? "  [Wearables Manager data detected]" : ""));
         if (matches.length > max) lines.push("- ... and " + (matches.length - max) + " more");
-        lines.push("", "The label similarity does NOT prove these are the same item. Wardrobe Sets will not remove, register, reuse, or skip any unregistered item because of its label.",
-            "Continuing may place the registered outfit item alongside the existing unregistered item.");
-        var answer = MessageBox.warning(lines.join("\n"), TITLE + " - Possible Matching Item", "&Continue", "&Cancel");
-        return {accepted:answer === 0,matches:matches};
+        lines.push("", "Similar labels do not prove these are the same items.",
+            "Register All Matches confirms that every listed pair is the same item. WM2 will tag and reuse the existing objects after checking their parts and links. Save the scene to keep these tags.",
+            "Continue leaves these objects unregistered and may load additional copies alongside them.");
+        var answer = MessageBox.warning(lines.join("\n"), TITLE + " - Possible Matching Item", "&Continue", "&Cancel", "&Register All Matches");
+        return {accepted:answer === 0||answer === 2,registerMatches:answer===2,matches:matches};
     }
 
     function chooseOutfitSources(st, fig) {
@@ -12305,6 +12368,8 @@
             else if(action==="duplicate")duplicateSet(payload.id,ctx.target);
             else if(action==="set_transition_policy")saveItemTransitionPolicy(payload,ctx.target);
             else if(action==="rebind_set")rebindSetToFigure(payload,ctx.target);
+            else if(action==="attach_sets")attachMaintenanceSets(payload,ctx.target);
+            else if(action==="register_matches")registerConfirmedMatches(payload,ctx.target);
             else if(action==="apply") {var st=app.db.sets[payload.id];if(!st)throw problem("SET_MISSING",payload.id);validateSetSelection(st,payload,ctx.target);
                 if(payload.similarLabelMatches&&payload.similarLabelMatches.length){ctx.diag.similarLabelMatches=clonePlain(payload.similarLabelMatches);
                     log("INFO","POSSIBLE_UNREGISTERED_LABEL_MATCH","User continued after "+payload.similarLabelMatches.length+" advisory label match(es). Labels were not used as identity or mutation keys.");}
@@ -12464,8 +12529,16 @@
     }
 
     function cleanApplyReport(r){
-        return !!(r&&r.ok&&!r.blocked&&!r.warningCount&&!r.failureCount&&
-            !(r.unavailableProperties&&r.unavailableProperties.length));
+        if(!r||!r.ok||r.blocked||r.failureCount||
+                (r.unavailableProperties&&r.unavailableProperties.length))return false;
+        if(!r.warningCount)return true;
+        // Coverage describes the limits of comparison, not a failed restore.
+        // Keep it in Last Report without preventing a successful auto-close.
+        var warnings=r.warningMessages||[];
+        if(warnings.length!==r.warningCount)return false;
+        for(var i=0;i<warnings.length;i++)
+            if(String(warnings[i]).indexOf("MATERIAL_COVERAGE:")!==0)return false;
+        return true;
     }
     function lastReportFolder(){
         if(!app.libraryPath)return "";
@@ -12809,13 +12882,283 @@ function WM2ResourceName(directory,name) {
         }
         return changed?next:null;
     }
+    function maintenanceCreatedText(st){
+        var raw=String(st.created||""),d=new Date(raw);
+        // QtScript and QJSEngine write different Date.toString() formats.
+        // Parse both explicitly: DAZ 4 cannot reliably read DAZ 6 dates (or vice versa).
+        var m=/^[A-Za-z]{3} ([A-Za-z]{3}) +(\d{1,2}) +(\d{4}) +(\d{2}):(\d{2}):(\d{2}) GMT([+-])(\d{2})(\d{2})/.exec(raw);
+        if(!m){
+            var qt=/^[A-Za-z]{3} ([A-Za-z]{3}) +(\d{1,2}) +(\d{2}):(\d{2}):(\d{2}) +(\d{4}) GMT([+-])(\d{2})(\d{2})/.exec(raw);
+            if(qt)m=[qt[0],qt[1],qt[2],qt[6],qt[3],qt[4],qt[5],qt[7],qt[8],qt[9]];
+        }
+        if(m){
+            var month=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].indexOf(m[1]);
+            if(month>=0){
+                var offset=(Number(m[8])*60+Number(m[9]))*(m[7]==="-"?-1:1);
+                d=new Date(Date.UTC(Number(m[3]),month,Number(m[2]),Number(m[4]),Number(m[5]),Number(m[6]))-offset*60000);
+            }
+        }
+        if(!raw||isNaN(d.getTime()))return "Created: unavailable";
+        function pad(n){return n<10?"0"+n:String(n);}
+        return pad(d.getDate())+"-"+pad(d.getMonth()+1)+"-"+d.getFullYear()+", "+
+            pad(d.getHours())+":"+pad(d.getMinutes())+":"+pad(d.getSeconds());
+    }
     function maintenanceOwnerText(st,owners){
+        if(st.scope.kind==="label"){
+            var base=figureIconBaseLabel(st.scope.label);
+            return base+", "+base+" (2)... | "+st.figureType;
+        }
         if(st.scope.kind!=="figure")return scopeDisplayText(st)+(st.scope.kind==="label"?" | "+st.figureType:"");
         var names=owners[st.scope.figureID]||[];
         if(names.length)return names.join(" / ")+" | "+st.figureType+(names.length>1?" | shared figure ID":"");
         return (st.scope.ownerLabel||st.scope.figureID)+" | "+st.figureType+" | not in scene";
     }
-    function setMaintenanceDialog(){
+    // Maintenance collects only library-owned outfit assets. FigureIcons,
+    // original content, logs and immutable catalog history are not asset garbage.
+    function maintenanceAssetKey(path){
+        return String(path).replace(/\\/g,"/").toLowerCase();
+    }
+    function maintenanceAssetGuard(root,relative,directory){
+        wm2MaterialCacheCheckPath(root,true,false);
+        var parts=safeRelative(relative).split("/"),path=root,entry=null;
+        if(["Items","Materials","Icons"].indexOf(parts[0])<0)throw new Error("Not an outfit asset folder.");
+        for(var i=0;i<parts.length;i++){
+            path+="/"+parts[i];
+            entry=wm2MaterialCacheCheckPath(path,i<parts.length-1||directory,false);
+            if(maintenanceAssetKey(entry.path).indexOf(maintenanceAssetKey(root)+"/")!==0)
+                throw new Error("An outfit file is outside the library.");
+        }
+        return entry;
+    }
+    function maintenanceAssetFiles(root){
+        var result=[],folders=["Items","Materials","Icons"];
+        wm2MaterialCacheCheckPath(root,true,false);
+        while(folders.length){
+            var relative=folders.pop();
+            if(!pathExists(root+"/"+relative))continue;
+            maintenanceAssetGuard(root,relative,true);
+            var names=wm2MaterialCacheEntries(root+"/"+relative);
+            for(var i=0;i<names.length;i++){
+                var name=String(names[i]);
+                if(!name||/[\\\/:\x00-\x1f]/.test(name)||name==="."||name==="..")
+                    throw new Error("Invalid outfit asset name.");
+                var child=relative+"/"+name,info=new DzFileInfo(root+"/"+child),directory;
+                try{directory=info.isDir();}finally{info.deleteLater();}
+                var entry=maintenanceAssetGuard(root,child,directory);
+                if(directory){
+                    if(child.split("/").length>32)throw new Error("Too many nested outfit folders.");
+                    folders.push(child);
+                }else result.push({relative:child,bytes:entry.bytes});
+            }
+        }
+        result.sort(function(a,b){return a.relative.localeCompare(b.relative);});
+        return result;
+    }
+    function maintenanceAssetPlan(db,ids,files,sceneData,documents){
+        var next=applySetMaintenance(db,ids,"delete"),keep={},items={},pending=[],root=maintenanceAssetKey(app.libraryPath)+"/";
+        function markPath(text){
+            var path=String(text).replace(/\\/g,"/"),key=maintenanceAssetKey(path);
+            if(key.indexOf(root)===0)path=path.slice(root.length);
+            if(!/^(Items|Materials|Icons)\//i.test(path))return;
+            path=safeRelative(path);key=maintenanceAssetKey(path);keep[key]=true;
+            // Native DUF thumbnail naming conventions.
+            if(/\.duf$/i.test(path)){
+                keep[key+".png"]=true;keep[key.replace(/\.duf$/,".png")]=true;
+                keep[key.replace(/\.duf$/,".tip.png")]=true;
+            }
+        }
+        function markID(id){
+            if(own(db.items,id)&&!items[id]){items[id]=true;pending.push(id);}
+        }
+        function visit(value){
+            if(typeof value==="string"){
+                markID(value);markPath(value);
+                if(/^\s*[\{\[]/.test(value)){
+                    var parsed=null;try{parsed=JSON.parse(value);}catch(ignoreJSON){}
+                    if(parsed)visit(parsed);
+                }
+            }else if(value&&typeof value==="object"){
+                var keys=Object.keys(value);
+                for(var k=0;k<keys.length;k++){markID(keys[k]);visit(value[keys[k]]);}
+            }
+        }
+        visit(next.sets);
+        for(var s=0;s<sceneData.length;s++)visit(sceneData[s]);
+        // Immutable recovery manifests may be referenced by closed saved scenes.
+        // They and their presets remain live independently of outfit definitions.
+        for(var d=0;d<documents.length;d++){
+            markPath(documents[d].relative);visit(documents[d].value);
+        }
+        while(pending.length)visit(db.items[pending.pop()]);
+        var itemIDs=Object.keys(next.items);
+        for(var j=0;j<itemIDs.length;j++)if(!items[itemIDs[j]])delete next.items[itemIDs[j]];
+        var garbage=[],bytes=0;
+        for(var f=0;f<files.length;f++){
+            var row=files[f],key=maintenanceAssetKey(row.relative);
+            if(!keep[key]){garbage.push(row);bytes+=row.bytes;}
+        }
+        return {next:next,files:garbage,bytes:bytes,setCount:ids.length};
+    }
+    function maintenanceDeletionPlan(db,ids){
+        var root=app.libraryPath,files=maintenanceAssetFiles(root),docs=[],metadata=[],nodes=sceneNodes();
+        for(var i=0;i<nodes.length;i++){
+            var data=readDataNative(nodes[i]);
+            if(data&&data.LibraryID===db.libraryID)metadata.push(data);
+        }
+        for(var j=0;j<files.length;j++){
+            var rel=files[j].relative;
+            if(/^Materials\/.*\.json$/i.test(rel)){
+                maintenanceAssetGuard(root,rel,false);
+                docs.push({relative:rel,value:readJSON(root+"/"+rel)});
+            }
+        }
+        var plan=maintenanceAssetPlan(db,ids,files,metadata,docs);
+        plan.root=root;plan.commitID=db.commitID;
+        return plan;
+    }
+    function maintenanceDeletionStamp(plan){
+        return JSON.stringify([plan.root,plan.commitID,plan.setCount,plan.files,plan.next]);
+    }
+    function confirmMaintenanceDeletion(plan){
+        var dlg=newGeorgiaDialog(true),accepted=false;
+        dlg.caption=TITLE+" - Delete Selected Sets";
+        var layout=new DzVBoxLayout(dlg);layout.margin=12;layout.spacing=12;
+        var text="Outfits to delete: "+plan.setCount+"\n"+
+            "Unused files to delete: "+plan.files.length+"\n"+
+            "Disk space to free: "+(plan.bytes/1000000).toFixed(2)+" MB\n\n"+
+            "This operation is irreversible. It cannot be undone.\n"+
+            "Scene objects are kept. Shared and scene recovery files are kept.";
+        var message=label(dlg,text);message.textFormat=DzLabel.PlainText;
+        message.setFixedSize(536,148);layout.addWidget(message);
+        var buttons=new DzHGroupBox(dlg);flattenGroupBox(buttons);buttons.insideMargin=0;buttons.setFixedHeight(52);layout.addWidget(buttons);
+        var cancel=new DzPushButton(buttons),remove=new DzPushButton(buttons);
+        cancel.text="Cancel";remove.text="Delete";cancel.setFixedHeight(52);remove.setFixedHeight(52);
+        cancel.autoDefault=false;remove.autoDefault=false;
+        remove.getWidget().setStyleSheet("QPushButton:enabled {background-color:#ab3030;color:white;}");
+        connect(cancel,"clicked()",function(){dlg.close();});
+        connect(remove,"clicked()",function(){accepted=true;dlg.close();});
+        dlg.setFixedSize(560,240);
+        try{dlg.exec();}finally{dlg.deleteLater();}
+        return accepted;
+    }
+    function executeMaintenanceDeletion(plan,previousFile){
+        if(!app.lockToken)throw new Error("The library is not locked.");
+        // Recheck all paths before committing. Commit the surviving references
+        // first: an I/O failure can leave unused files, never live missing assets.
+        for(var i=0;i<plan.files.length;i++){
+            var entry=maintenanceAssetGuard(plan.root,plan.files[i].relative,false);
+            if(entry.bytes!==plan.files[i].bytes)throw new Error("An outfit file changed. Review the deletion again.");
+        }
+        commitCatalog(plan.next,previousFile);
+        var failures=[];
+        for(var j=0;j<plan.files.length;j++){
+            var file=null,row=plan.files[j];
+            try{
+                var current=maintenanceAssetGuard(plan.root,row.relative,false);
+                if(current.bytes!==row.bytes)throw new Error("The file changed.");
+                file=new DzFile(current.path);
+                if(!file.remove()||pathExists(current.path))throw new Error("The file could not be removed.");
+            }catch(e){failures.push(row.relative+": "+String(e));}
+            finally{if(file)file.deleteLater();}
+        }
+        invalidateReadScope();
+        if(failures.length){
+            print(TITLE+" maintenance cleanup: "+failures.join("\n"));
+            throw new Error("The sets were deleted, but "+failures.length+" unused file(s) could not be removed. Check folder permissions and try cleanup again.");
+        }
+    }
+
+    function maintenanceLibraryBytes(root){
+        var pending=[root],bytes=0;
+        while(pending.length){
+            var folder=pending.pop();
+            wm2MaterialCacheCheckPath(folder,true,false);
+            var names=wm2MaterialCacheEntries(folder);
+            for(var i=0;i<names.length;i++){
+                var name=String(names[i]);
+                if(!name||name==="."||name===".."||/[\\\/:\x00-\x1f]/.test(name))
+                    throw new Error("Invalid library file name.");
+                var path=folder+"/"+name,info=new DzFileInfo(path),directory;
+                try{directory=info.isDir();}finally{info.deleteLater();}
+                var entry=wm2MaterialCacheCheckPath(path,directory,false);
+                if(directory)pending.push(path);else bytes+=entry.bytes;
+            }
+        }
+        return bytes;
+    }
+    function maintenanceAttachSummary(db,ids,type){
+        var result={cross:0,properties:0,handPoses:0};
+        for(var i=0;i<ids.length;i++){
+            var st=db.sets[ids[i]];
+            if(!st)throw new Error("An outfit is missing. Reopen Set Maintenance.");
+            if(st.figureType===type)continue;
+            result.cross++;
+            if(st.properties&&st.properties.length)result.properties++;
+            if(st.handPoses&&(st.handPoses.right||st.handPoses.left))result.handPoses++;
+        }
+        return result;
+    }
+    function attachMaintenanceSets(payload,fig){
+        if(!payload||payload.commitID!==app.db.commitID)throw new Error("The library changed. Reopen Set Maintenance.");
+        var next=clonePlain(app.db),type=String(fig.objectName),ids=payload.ids||[];
+        if(!ids.length)throw new Error("Select at least one outfit.");
+        var duplicate=payload.mode==="duplicate";
+        if(payload.mode&&payload.mode!=="move"&&!duplicate)throw new Error("Unknown attachment mode.");
+        var summary=maintenanceAttachSummary(app.db,ids,type);
+        if(summary.cross&&payload.confirmedTargetType!==type)
+            throw new Error("Confirm transfer to the different Genesis type first.");
+        if((summary.properties||summary.handPoses)&&payload.confirmedRemoval!==true)
+            throw new Error("Confirm permanent removal of saved properties and hand poses first.");
+        // Adapt independent item definitions, so sets outside the selection and
+        // existing scene registrations retain their original type and presets.
+        var map={},sourceItems=[],presets=[];
+        for(var i=0;i<ids.length;i++){
+            var source=app.db.sets[ids[i]];
+            if(source.figureType===type)continue;
+            for(var j=0;j<source.items.length;j++){
+                var itemID=source.items[j];if(own(map,itemID))continue;
+                var original=app.db.items[itemID];validatePreset(original);
+                sourceItems.push(original);map[original.id]=unique("item");map[original.variantID]=unique("variant");
+                for(var k=0;k<original.parts.length;k++)map[original.parts[k].id]=unique("part");
+            }
+        }
+        for(var n=0;n<sourceItems.length;n++){
+            var old=sourceItems[n],item=remapBindingIDs(old,map);
+            item.figureType=type;item.preset="Items/"+item.id+".duf";item.created=String(new Date());
+            if(item.transitionPolicy){
+                item.transitionPolicy.replacementIDs=item.transitionPolicy.replacementIDs.filter(function(id){
+                    return Object.keys(map).some(function(key){return map[key]===id;});
+                });
+            }
+            next.items[item.id]=item;
+            presets.push({item:item,data:remapBindingIDs(readJSON(inLibrary(old.preset)),map)});
+        }
+        var targetID=figureIdentity(fig,true);
+        for(var q=0;q<ids.length;q++){
+            var st=clonePlain(next.sets[ids[q]]),savedID=st.id,savedName=st.name;
+            if(st.figureType!==type){
+                st=remapBindingIDs(st,map);st.properties=[];st.handPoses={};
+                st.id=savedID;st.name=savedName;
+            }
+            st.figureType=type;st.scope={kind:"figure",figureID:targetID,ownerLabel:String(fig.getLabel())};
+            st.modified=String(new Date());
+            if(duplicate){
+                st.id=unique("set");st.created=st.modified;
+                var base=savedName+" - "+String(fig.getLabel()),name=base,number=2;
+                while(Object.keys(next.sets).some(function(id){return next.sets[id].name===name;}))name=base+" ("+(number++)+")";
+                st.name=name;
+            }
+            next.sets[st.id]=st;
+        }
+        validateCatalog(next,next.libraryID);
+        for(var pi=0;pi<presets.length;pi++){
+            writeNewJSON(inLibrary(presets[pi].item.preset),presets[pi].data);validatePreset(presets[pi].item);
+        }
+        commitCatalog(next,app.catalogFile);ctx.catalogCommitted=true;
+        ctx.outcome=(duplicate?"Created and attached copies of ":"Attached ")+ids.length+" outfit(s) to "+String(fig.getLabel())+". No clothing applied.";
+        log("PASS","SETS_ATTACHED",ctx.outcome);
+    }
+    function setMaintenanceDialog(selectedFigure){
         var db=readCatalog(),rev=db.commitID,owners={},nodes=sceneNodes(),rows=[];
         for(var i=0;i<nodes.length;i++)if(isFigure(nodes[i])){
             var id=value(nodes[i],"FigureID");
@@ -12823,69 +13166,142 @@ function WM2ResourceName(directory,name) {
         }
         var dlg=newGeorgiaDialog(true);dlg.caption=TITLE+" - Set Maintenance";
         var layout=new DzVBoxLayout(dlg);layout.margin=8;layout.spacing=6;
+        var filterRow=new DzHGroupBox(dlg);flattenGroupBox(filterRow);layout.addWidget(filterRow);
+        label(filterRow,"Filter by name:");var search=new DzLineEdit(filterRow);
+        search.toolTip="Show outfits whose names contain this text.";
         var top=new DzHGroupBox(dlg);flattenGroupBox(top);layout.addWidget(top);
         var all=new DzPushButton(top),none=new DzPushButton(top),status=label(top,"");
         all.text="Select All";none.text="Unselect All";
+        all.setFixedSize(150,52);none.setFixedSize(150,52);status.minWidth=340;
         var scroll=new DzScrollArea(dlg);scroll.widgetResizable=true;layout.addWidget(scroll);
         var body=new DzWidget(scroll),list=new DzVBoxLayout(body);list.margin=4;list.spacing=4;
+        var entries=new DzWidget(body),entriesLayout=new DzVBoxLayout(entries);entriesLayout.margin=0;entriesLayout.spacing=4;list.addWidget(entries);
         var ids=Object.keys(db.sets).sort(function(a,b){return db.sets[a].name.localeCompare(db.sets[b].name);});
         function makeRow(st){
-            var row=new DzHGroupBox(body);row.setFixedHeight(68);list.addWidget(row);
-            var check=new DzCheckBox(row),icon=new DzPushButton(row);icon.setFixedSize(54,60);icon.autoDefault=false;
-            var file=st.icon?inLibrary(st.icon):"";
-            if(!file||!setPathButtonPixmap(icon,file,48,56,true,true))setPathButtonPixmap(icon,builtinIconPreviewPath("outfit"),48,56,true,true);
+            var row=new DzHGroupBox(entries);row.setFixedHeight(143);entriesLayout.addWidget(row);
+            var check=new DzCheckBox(row),icon=new DzPushButton(row);check.setFixedWidth(24);
+            icon.setFixedSize(100,128);icon.autoDefault=false;setCardIcon(icon,st);
             var col=new DzVGroupBox(row);flattenGroupBox(col);
             var title=label(col,st.name),owner=label(col,maintenanceOwnerText(st,owners));col.minWidth=460;
+            var titleFont=newGeorgiaFont();titleFont.pixelSize=16;titleFont.bold=true;title.font=titleFont;
+            title.getWidget().setStyleSheet("QLabel { color: #f5d77c; }");
+            label(col,maintenanceCreatedText(st));
             owner.toolTip=owner.text;
-            rows.push({id:st.id,row:row,check:check,owner:owner});
+            rows.push({id:st.id,row:row,check:check,owner:owner,matches:true});
             connect(check,"clicked()",refresh);
             connect(icon,"clicked()",function(){check.checked=!check.checked;refresh();});
         }
         for(var j=0;j<ids.length;j++)makeRow(db.sets[ids[j]]);
         list.addStretch(1);scroll.setWidget(body);
         var footer=new DzHGroupBox(dlg);flattenGroupBox(footer);layout.addWidget(footer);
-        var reset=new DzPushButton(footer),del=new DzPushButton(footer),close=new DzPushButton(footer);
-        reset.text="Reset Selected";del.text="Delete Selected";close.text="Close";
+        var reset=new DzPushButton(footer),attach=new DzPushButton(footer),del=new DzPushButton(footer),close=new DzPushButton(footer);
+        reset.text="Reset Selected";attach.text="Attach Selected";attach.setFixedHeight(52);
+        attach.toolTip="Bind selected outfits to the current Wardrobe figure without applying clothing.";
+        attach.getWidget().setStyleSheet("QPushButton:enabled {background-color:#ac5819;color:white;}");del.text="Delete Selected";close.text="Close";
+        reset.setFixedHeight(52);del.setFixedHeight(52);close.setFixedHeight(52);
         reset.toolTip="Make selected restricted sets available to any figure of their saved type.";
-        del.toolTip="Delete selected set definitions. Clothing, presets and scene objects are kept.";
+        del.toolTip="Delete selected outfits and unused library files. Review the disk space before confirming.";
         reset.getWidget().setStyleSheet("QPushButton:enabled {background-color:#ac5819;color:white;}");
         del.getWidget().setStyleSheet("QPushButton:enabled {background-color:#ab3030;color:white;}");
         function selected(resetOnly){var result=[];for(var i=0;i<rows.length;i++){
-            var r=rows[i],st=db.sets[r.id];if(st&&r.check.checked&&(!resetOnly||st.scope.kind!=="type"))result.push(r.id);
+            var r=rows[i],st=db.sets[r.id];if(st&&r.matches&&r.check.checked&&(!resetOnly||st.scope.kind!=="type"))result.push(r.id);
         }return result;}
+        var librarySizeText="";
+        function updateLibrarySize(){
+            try{
+                librarySizeText=(maintenanceLibraryBytes(app.libraryPath)/1000000).toFixed(2)+" MB";
+                status.toolTip="Total size of the library folder, including presets, icons, catalog history and reports.";
+            }catch(e){
+                librarySizeText="Size unavailable";status.toolTip="The library size could not be read.";
+                print(TITLE+" library size: "+String(e));
+            }
+        }
         function refresh(){
             var count=selected(false).length,total=Object.keys(db.sets).length;
-            status.text=count+" selected / "+total+" sets";reset.enabled=selected(true).length>0;del.enabled=count>0;
-            all.enabled=count<total;none.enabled=count>0;
+            status.text=librarySizeText+" | "+count+" selected / "+total+" sets";reset.enabled=selected(true).length>0;del.enabled=count>0;
+            var visible=0;for(var i=0;i<rows.length;i++)if(db.sets[rows[i].id]&&rows[i].matches)visible++;
+            if(String(search.text).length)status.text+=" | "+visible+" shown";
+            attach.enabled=count>0&&!!selectedFigure;
+            all.enabled=count<visible;none.enabled=count>0;
         }
-        function selectAll(v){for(var i=0;i<rows.length;i++)rows[i].check.checked=v;refresh();}
+        function selectAll(v){for(var i=0;i<rows.length;i++)if(rows[i].matches)rows[i].check.checked=v;refresh();}
+        function filterRows(){
+            var query=String(search.text||"").toLowerCase().replace(/^\s+|\s+$/g,"");
+            for(var i=0;i<rows.length;i++){
+                var r=rows[i],st=db.sets[r.id];r.matches=!!st&&String(st.name).toLowerCase().indexOf(query)!==-1;
+                if(r.matches)r.row.show();else{r.row.hide();r.check.checked=false;}
+            }
+            refresh();
+        }
         function change(action){
             var ids=selected(action==="reset");if(!ids.length)return;
-            var names=ids.slice(0,8).map(function(id){return db.sets[id].name;}).join("\n");
-            if(ids.length>8)names+="\n... ("+(ids.length-8)+" more)";
-            var msg=action==="delete"?"Delete "+ids.length+" selected set(s) from the library? Clothing and scene objects will be kept.":
-                "Allow any figure of the saved type to use "+ids.length+" selected restricted set(s)?";
-            if(MessageBox.question(msg+"\n\n"+names,TITLE+" - Set Maintenance","&Cancel",action==="delete"?"&Delete":"&Reset")!==1)return;
             try{
                 lockLibrary();
                 try{
                     var current=readCatalog();
-                    if(current.libraryID!==db.libraryID||current.commitID!==rev)throw problem("CATALOG_CHANGED","The library changed. Reopen Set Maintenance and review your selection.");
-                    var next=applySetMaintenance(current,ids,action);
-                    if(next)commitCatalog(next,app.catalogFile);
-                    db=app.db;rev=db.commitID;
+                    if(current.libraryID!==db.libraryID||current.commitID!==rev)
+                        throw new Error("The library changed. Reopen Set Maintenance and review your selection.");
+                    if(action==="delete"){
+                        var plan=maintenanceDeletionPlan(current,ids);
+                        if(!confirmMaintenanceDeletion(plan))return;
+                        var fresh=readCatalog(),verified=maintenanceDeletionPlan(fresh,ids);
+                        if(maintenanceDeletionStamp(plan)!==maintenanceDeletionStamp(verified))
+                            throw new Error("The library or scene changed. Review the deletion again.");
+                        executeMaintenanceDeletion(verified,app.catalogFile);
+                    }else{
+                        var names=ids.slice(0,8).map(function(id){return db.sets[id].name;}).join("\\n");
+                        if(ids.length>8)names+="\\n... ("+(ids.length-8)+" more)";
+                        if(MessageBox.question("Allow any figure of the saved type to use "+ids.length+
+                            " selected restricted set(s)?\\n\\n"+names,TITLE+" - Set Maintenance","&Cancel","&Reset")!==1)return;
+                        var next=applySetMaintenance(current,ids,action);
+                        if(next)commitCatalog(next,app.catalogFile);
+                    }
                 }finally{unlockLibrary();}
-                for(var i=0;i<rows.length;i++){
-                    var r=rows[i],st=db.sets[r.id];r.check.checked=false;
-                    if(!st)r.row.hide();else{r.owner.text=maintenanceOwnerText(st,owners);r.owner.toolTip=r.owner.text;}
-                }
-                refresh();
-            }catch(e){MessageBox.warning(userErrorText(e),TITLE+" - Set Maintenance","&OK");}
+            }catch(e){MessageBox.warning(String(e.message||e),TITLE+" - Set Maintenance","&OK");}
+            // Also refresh after a partial disk-cleanup failure: catalog commits
+            // are final and must not leave deleted rows available for another click.
+            db=app.db;rev=db.commitID;
+            for(var i=0;i<rows.length;i++){
+                var r=rows[i],st=db.sets[r.id];r.check.checked=false;
+                if(!st)r.row.hide();else{r.owner.text=maintenanceOwnerText(st,owners);r.owner.toolTip=r.owner.text;}
+            }
+            updateLibrarySize();filterRows();
         }
         connect(all,"clicked()",function(){selectAll(true);});connect(none,"clicked()",function(){selectAll(false);});
         connect(reset,"clicked()",function(){change("reset");});connect(del,"clicked()",function(){change("delete");});
+        connect(attach,"clicked()",function(){
+            var chosen=selected(false),fig=selectedFigure?live(key(selectedFigure)):null;
+            if(!chosen.length||!fig)return;
+            var modeChoice=MessageBox.question("Move the selected outfits to this figure, or create duplicates?",TITLE+" - Attach Selected","&Cancel","&Move","&Duplicate");
+            if(modeChoice!==1&&modeChoice!==2)return;
+            var duplicate=modeChoice===2;
+            var targetType=String(fig.objectName),summary=maintenanceAttachSummary(db,chosen,targetType);
+            var prompt=(duplicate?"Create and attach copies of ":"Move ")+chosen.length+" selected outfit(s) to "+String(fig.getLabel())+" ["+targetType+"]?\n\n"+
+                (duplicate?"The original outfits will remain unchanged. No clothing will be applied.":"Their existing figure bindings will be replaced. No clothing will be applied and no outfit copies will be created.");
+            if(summary.cross)prompt+="\n\n"+summary.cross+" outfit(s) will be transferred to a different Genesis type. DAZ fitting will occur when they are applied.";
+            if(summary.properties||summary.handPoses){
+                prompt+="\n\nWARNING: The transferred outfits contain saved properties ("+summary.properties+
+                    " outfit(s)) or hand poses ("+summary.handPoses+" outfit(s)). "+(duplicate?"These will be omitted from the copies. The originals retain all saved properties and hand poses.":"These will be permanently deleted. This cannot be undone.");
+                prompt+="\nOutfits already matching the target Genesis type keep their properties and hand poses.";
+            }
+            if(MessageBox.question(prompt,TITLE+" - Attach Selected","&Cancel","&Attach")!==1)return;
+            var report=runAction("attach_sets",key(fig),{ids:chosen,mode:duplicate?"duplicate":"move",commitID:rev,confirmedTargetType:targetType,confirmedRemoval:true});
+            if(!report.ok||report.failureCount>0)presentActionReport(report);
+            db=app.db;rev=db.commitID;
+            var ownerID=value(fig,"FigureID");if(ownerID)owners[ownerID]=[String(fig.getLabel())];
+            for(var i=0;i<rows.length;i++){
+                var r=rows[i],st=db.sets[r.id];r.check.checked=false;
+                if(st){r.owner.text=maintenanceOwnerText(st,owners);r.owner.toolTip=r.owner.text;}
+            }
+            var existing={};for(var ri=0;ri<rows.length;ri++)existing[rows[ri].id]=true;
+            Object.keys(db.sets).sort(function(a,b){return db.sets[a].name.localeCompare(db.sets[b].name);}).forEach(function(id){
+                if(!existing[id])makeRow(db.sets[id]);
+            });
+            updateLibrarySize();filterRows();
+        });
         connect(close,"clicked()",function(){dlg.close();});
-        refresh();dlg.setFixedSize(720,Math.min(690,174+Math.max(1,ids.length)*72));
+        connect(search,"textChanged(const QString&)",filterRows);
+        updateLibrarySize();filterRows();dlg.setFixedSize(720,Math.min(690,212+Math.max(1,ids.length)*72));
         try{dlg.exec();}finally{dlg.deleteLater();}
     }
     // Manual cleanup is ONLY for the classic Menu/Full sidecar directory.
@@ -13109,7 +13525,7 @@ function WM2ResourceName(directory,name) {
         var manage=new DzPushButton(backupRow);manage.text="Set Maintenance...";manage.setFixedSize(165,36);manage.autoDefault=false;
         manage.enabled=!!(app.libraryPath&&app.db);
         manage.toolTip="Manage all sets in the current active library.";
-        connect(manage,"clicked()",function(){try{setMaintenanceDialog();}catch(e){MessageBox.warning(userErrorText(e),TITLE,"&OK");}});
+        connect(manage,"clicked()",function(){try{setMaintenanceDialog(selectedFigure);}catch(e){MessageBox.warning(userErrorText(e),TITLE,"&OK");}});
         backupButton.text="Copy Library...";backupButton.setFixedSize(165,36);backupButton.autoDefault=false;
         backupButton.enabled=!!(app.libraryPath&&app.db);
         backupButton.toolTip="Create a verified backup of the CURRENT active library in a separate empty folder. Does not switch libraries.";
@@ -14859,6 +15275,22 @@ function WM2ResourceName(directory,name) {
             String(rec.partID||"")===String(target.partID||"");
         return !!rec.nodeKey&&rec.nodeKey===target.nodeKey;
     }
+    var wardrobePropertyArtworkModule=null;
+    function wardrobePropertyArtwork(parent,prop,text,width,size,values) {
+        if(!prop)return null;
+        try {
+            if(!wardrobePropertyArtworkModule){
+                var path=resourcePath("Wearable Manager Property UI.dse");
+                if(!readable(path))path=resourcePath("Wearable Manager Property UI.dsa");
+                var script=new DzScript();
+                if(!script.loadFromFile(path))throw new Error("Property artwork helper is unavailable");
+                wardrobePropertyArtworkModule=(new Function(String(script.getCode())+"\nreturn WM2PropertyUI;"))();
+            }
+            var numeric=!!values&&wardrobePropertyArtworkModule.isNumeric(prop);
+            return wardrobePropertyArtworkModule.create(parent,prop,{label:text,width:numeric?650:width,iconSize:numeric?91:size,sliders:numeric,
+                applyValue:values?values.applyValue:0,resetValue:values?values.resetValue:0});
+        }catch(e){print(TITLE+" / Property artwork: "+errorText(e));return null;}
+    }
     function propertyOverridesDialog(input,fig,rows) {
         var working=clonePlain(input||[]),dlg=newGeorgiaDialog(true);
         dlg.caption=TITLE+" - Set Properties";
@@ -14918,8 +15350,8 @@ function WM2ResourceName(directory,name) {
             var total=12;
             for(var h=0;h<sections.length;h++){
                 var sec=sections[h],active=0;
-                for(var k=0;k<sec.entries.length;k++)if(!sec.entries[k].removed)active++;
-                total+=Math.max(sec.target.targetKind==="figure"?220:116,98+active*40)+8;
+                for(var k=0;k<sec.entries.length;k++)if(!sec.entries[k].removed)active+=sec.entries[k].height||40;
+                total+=Math.max(sec.target.targetKind==="figure"?220:116,98+active)+8;
             }
             var viewport=Math.max(175,Math.min(570,total));
             area.setFixedHeight(viewport);
@@ -14951,14 +15383,16 @@ function WM2ResourceName(directory,name) {
             setResourceButtonIcon(add,"Wearable Manager Add.png",64,64);
             var section={target:target,node:node,panel:panel,list:list,entries:[]};sections.push(section);
             function sizePanel(){
-                var required=55+section.entries.filter(function(e){return !e.removed;}).length*40+43;
+                var required=98;
+                for(var si=0;si<section.entries.length;si++)if(!section.entries[si].removed)required+=section.entries[si].height||40;
                 panel.setFixedHeight(Math.max(target.targetKind==="figure"?220:116,required));
                 refreshPropertyDialogHeight();
             }
             function addEditor(rec) {
-                var entry={rec:clonePlain(rec),removed:false,node:node},line=new DzHGroupBox(list);flattenGroupBox(line);
+                var entry={rec:clonePlain(rec),removed:false,node:node,height:40},line=new DzHGroupBox(list);flattenGroupBox(line);
                 line.setFixedHeight(38);entry.line=line;
-                var propName=label(line,String(rec.propertyLabel||rec.propertyName));propName.setFixedWidth(220);
+                var nameSlot=new DzVGroupBox(line);flattenGroupBox(nameSlot);nameSlot.setFixedWidth(220);
+                var propName=label(nameSlot,String(rec.propertyLabel||rec.propertyName));propName.setFixedWidth(220);
                 propName.font=propertyFont;propName.toolTip=String(rec.propertyName);
                 var applyCaption=label(line,"Value on apply");applyCaption.setFixedWidth(100);
                 var ae=new DzLineEdit(line);ae.setFixedWidth(90);
@@ -14969,7 +15403,7 @@ function WM2ResourceName(directory,name) {
                 setResourceButtonIcon(remove,"Wearable Manager Delete.png",24,24);
                 // Explicit horizontal layout: precise 10 / 20 / 10 px control gaps.
                 var valueLayout=new DzBoxLayout(line);
-                valueLayout.addWidget(propName);valueLayout.addWidget(applyCaption);
+                valueLayout.addWidget(nameSlot);valueLayout.addWidget(applyCaption);
                 valueLayout.addSpacing(10);valueLayout.addWidget(ae);
                 valueLayout.addSpacing(20);valueLayout.addWidget(resetCaption);
                 valueLayout.addSpacing(10);valueLayout.addWidget(re);valueLayout.addWidget(remove);
@@ -14981,6 +15415,19 @@ function WM2ResourceName(directory,name) {
                 }catch(propertyError){
                     if(!unavailableOverrideError(propertyError))throw propertyError;
                     entry.missingReason=String(propertyError);
+                }
+                if(candidate&&candidate.handle){
+                    entry.artwork=wardrobePropertyArtwork(nameSlot,candidate.handle,String(rec.propertyLabel||rec.propertyName),220,32,rec);
+                    if(entry.artwork){
+                        propName.hide();
+                        if(entry.artwork.apply&&entry.artwork.reset){
+                            entry.artwork.apply.label="Apply value";entry.artwork.reset.label="Reset value";
+                            nameSlot.setFixedWidth(650);line.setFixedHeight(98);entry.height=102;
+                            applyCaption.hide();resetCaption.hide();ae.hide();re.hide();
+                        }else{
+                            nameSlot.setFixedWidth(220);
+                        }
+                    }
                 }
                 if(entry.missingReason){
                     try{propName.getWidget().setStyleSheet("QLabel { color: #FF5454; font-weight: bold; }");}catch(ignoreMissingColor){}
@@ -15032,8 +15479,8 @@ function WM2ResourceName(directory,name) {
                             entry.nameWidget.toolTip="This saved property is not available on the current figure or item. Choose another property or remove it.";
                         }
                     }
-                    r.applyValue=parseOverrideNumber(entry.apply.text,"Apply for "+r.propertyName,candidate);
-                    r.resetValue=parseOverrideNumber(entry.reset.text,"Reset for "+r.propertyName,candidate);
+                    r.applyValue=entry.artwork&&entry.artwork.apply?entry.artwork.getApplyValue():parseOverrideNumber(entry.apply.text,"Apply for "+r.propertyName,candidate);
+                    r.resetValue=entry.artwork&&entry.artwork.reset?entry.artwork.getResetValue():parseOverrideNumber(entry.reset.text,"Reset for "+r.propertyName,candidate);
                     if(p){
                         checkPropertyOverrideValue(p,r,r.applyValue,"editor Apply");
                         checkPropertyOverrideValue(p,r,r.resetValue,"editor Reset");
@@ -15351,19 +15798,36 @@ function WM2ResourceName(directory,name) {
         handToggle(rightHand,"Right Hand Pose",!!(old&&old.handPoses&&old.handPoses.right),"right");
         handToggle(leftHand,"Left Hand Pose",!!(old&&old.handPoses&&old.handPoses.left),"left");
         var handBottomGap=label(setPropertyColumn,"");handBottomGap.setFixedHeight(10);
-        var propertySummary=label(setPropertyColumn,"");propertySummary.minWidth=485;
-        propertySummary.wordWrap=true;propertySummary.alignment=0x24;
+        var propertySummaryArea=new DzScrollArea(setPropertyColumn);
+        propertySummaryArea.widgetResizable=true;propertySummaryArea.setHorizontalScrollbarDisplay(false);
+        propertySummaryArea.minWidth=485;
+        var propertySummary=new DzVGroupBox(propertySummaryArea);flattenGroupBox(propertySummary);
+        propertySummaryArea.setWidget(propertySummary);
+        var propertySummaryCards=[];
         function refreshPropertySummary(){
-            var names=[];
-            for(var pi=0;pi<propertyOverrides.length;pi++){
-                var p=propertyOverrides[pi],propertyName=trim(String(p.propertyLabel||p.propertyName||""));
-                if(propertyName&&names.indexOf(propertyName)<0)names.push(propertyName);
+            for(var ci=0;ci<propertySummaryCards.length;ci++){
+                var previous=propertySummaryCards[ci];
+                previous.widget.hide();previous.widget.deleteLater();
             }
-            propertySummary.text=names.length?names.map(function(n){return "- "+n;}).join("\n"):"No Properties";
-            propertySummary.toolTip=names.join(", ");
-            // Keep layout stable; the complete list remains in the tooltip if
-            // there are unusually many overrides.
-            propertySummary.setFixedHeight(Math.max(25,Math.min(115,names.length*23+8)));
+            propertySummaryCards=[];
+            var inv={};try{inv=inventory(fig,app.db);}catch(ignoreSummaryInventory){}
+            for(var pi=0;pi<propertyOverrides.length;pi++){
+                var rec=propertyOverrides[pi],name=String(rec.propertyLabel||rec.propertyName||""),prop=null,missing=false;
+                try{
+                    var owner=rec.targetKind==="figure"?fig:(rec.itemID&&own(inv,rec.itemID)?propertyTargetNode(rec,fig,inv):null);
+                    if(!owner&&rec.nodeKey)owner=live(rec.nodeKey);
+                    if(owner)prop=propertyHandleForOverride(owner,rec);
+                }catch(ignoreSummaryProperty){missing=true;}
+                var card=wardrobePropertyArtwork(propertySummary,prop,name,470,48);
+                if(!card){
+                    var text=label(propertySummary,name);text.setFixedHeight(48);text.wordWrap=true;
+                    if(missing)try{text.getWidget().setStyleSheet("QLabel { color: #FF5454; }");}catch(ignoreSummaryStyle){}
+                    card={widget:text};
+                }
+                propertySummaryCards.push(card);
+            }
+            if(!propertySummaryCards.length){var empty=label(propertySummary,"No Properties");empty.setFixedHeight(25);propertySummaryCards.push({widget:empty});}
+            propertySummaryArea.setFixedHeight(Math.max(29,Math.min(170,propertyOverrides.length*54+8)));
         }
         connect(propertyButton,"clicked()",function(){
             var edited=propertyOverridesDialog(propertyOverrides,fig,rows);
@@ -16395,6 +16859,11 @@ function WM2ResourceName(directory,name) {
                 }
                 var labelCheck=confirmPossibleUnregisteredLabelMatches(st,fig);
                 if(!labelCheck.accepted){status.text="Cancelled. No wardrobe items changed.";return;}
+                if(labelCheck.registerMatches){
+                    var registration=runAction("register_matches",key(fig),{id:st.id,commitID:app.db.commitID,matches:labelCheck.matches});
+                    if(!registration.ok||registration.failureCount){status.text=shortActionStatus(registration);presentActionReport(registration);return;}
+                    labelCheck.matches=[];
+                }
                 var sourceChoice=chooseOutfitSources(st,fig);
                 if(sourceChoice===null){status.text="Cancelled. No wardrobe items changed.";return;}
                 r=runAction("apply",key(fig),{id:st.id,selection:setSelectionSnapshot(st,"Apply: "+st.name),sources:sourceChoice,removalMode:click.mode,similarLabelMatches:labelCheck.matches});
@@ -16673,7 +17142,9 @@ function WM2ResourceName(directory,name) {
         var script=null,held=false,busy=g_matewWardrobeSetsPrototypeBusy;
         try{
             script=new DzScript();
-            if(!script.loadFromFile(scriptDirectory()+"/Wearable Manager Put On.dsa"))throw new Error("Cannot load Wearable Manager Put On.dsa: "+script.errorMessage());
+            var putOnPath=scriptDirectory()+"/Wearable Manager Put On.dse";
+            if(!pathExists(putOnPath))putOnPath=scriptDirectory()+"/Wearable Manager Put On.dsa";
+            if(!script.loadFromFile(putOnPath))throw new Error("Cannot load Wearable Manager Put On: "+script.errorMessage());
             beginNodeSelectionHold();held=true;
             // The synchronous Put On call runs before Wardrobe opens its UI or
             // starts a transaction. Its normal WM lock and recovery checks apply.
@@ -16692,6 +17163,85 @@ function WM2ResourceName(directory,name) {
             try{if(held)restoreNodeSelectionHold();}
             finally{if(script)script.deleteLater();invalidateReadScope();}
         }
+    }
+    function serviceRequest(args){
+        if((args.length!==4&&args.length!==5)||typeof args[1]!=="string"||typeof args[2]!=="string"||typeof args[3]!=="string")
+            throw new Error("Expected character label, outfit name and action.");
+        var action=trim(args[3]).toLowerCase();
+        if(["list sets","put on","take off","put on by id","take off by id"].indexOf(action)<0)
+            throw new Error("Unknown service action. Use 'list sets', 'put on', 'take off', 'put on by id' or 'take off by id'.");
+        var name=trim(args[2]);if(!name&&action!=="list sets")throw new Error("Outfit name or ID must not be empty.");
+        if(action==="list sets"&&name)throw new Error("Pass an empty outfit name when listing sets.");
+        return {label:trim(args[1]),name:name,action:action};
+    }
+    function serviceFigure(characterLabel){
+        if(!characterLabel){
+            var selected=Scene.getPrimarySelection();
+            if(selected&&isFigure(selected))return selected;
+            var owner=boneOwner(selected);
+            if(owner&&isFigure(owner))return owner;
+            throw new Error("Select a supported character or one of its bones.");
+        }
+        var nodes=sceneNodes(),matches=[];
+        for(var i=0;i<nodes.length;i++)if(isFigure(nodes[i])&&String(nodes[i].getLabel())===characterLabel)matches.push(nodes[i]);
+        if(matches.length!==1)throw new Error(matches.length?
+            "More than one character has the label '"+characterLabel+"'. Select the intended character and pass an empty label.":
+            "Character '"+characterLabel+"' was not found or is not supported.");
+        return matches[0];
+    }
+    function serviceSet(name,fig){
+        var ids=Object.keys(app.db.sets),matches=[];
+        for(var i=0;i<ids.length;i++){
+            var st=app.db.sets[ids[i]];
+            if(st.name===name&&!scopeProblem(st,fig))matches.push(st);
+        }
+        if(matches.length!==1)throw new Error(matches.length?
+            "More than one compatible outfit is named '"+name+"'. Give the outfits distinct names.":
+            "No compatible outfit named '"+name+"' was found for this character.");
+        return matches[0];
+    }
+    function serviceListSets(fig){
+        var result=[],ids=Object.keys(app.db.sets),groups=app.db.groups||{};
+        for(var i=0;i<ids.length;i++){
+            var st=app.db.sets[ids[i]];if(scopeProblem(st,fig))continue;
+            var groupID=setGroupID(st);
+            result.push({id:st.id,name:st.name,groupID:groupID,
+                groupName:groupID&&groups[groupID]?groups[groupID].name:"Default"});
+        }
+        result.sort(function(a,b){var an=a.name.toLowerCase(),bn=b.name.toLowerCase();
+            return an<bn?-1:(an>bn?1:(a.id<b.id?-1:(a.id>b.id?1:0)));});
+        return result;
+    }
+    function serviceSetByID(id,fig){
+        var st=app.db.sets[id];
+        if(!st||scopeProblem(st,fig))throw new Error("No compatible outfit with ID '"+id+"' was found for this character. Refresh the set list.");
+        return st;
+    }
+    function mainService(args){
+        var request=serviceRequest(args);
+        refreshWM2Figures();
+        var pref=loadPreferences();applyUISettings(pref.uiSettings);
+        if(!pref.libraryPath)throw new Error("Configure a wardrobe library in Wardrobe Settings first.");
+        app.libraryPath=canonicalDirectory(pref.libraryPath,false);app.db=readCatalog();
+        var fig=serviceFigure(request.label);
+        var result={apiVersion:1,ok:true,action:request.action,libraryID:app.db.libraryID,
+            figure:{label:String(fig.getLabel()),type:String(fig.objectName)}};
+        if(request.action==="list sets"){
+            result.sets=serviceListSets(fig);return result;
+        }
+        var byID=request.action.indexOf(" by id")>=0;
+        var st=byID?serviceSetByID(request.name,fig):serviceSet(request.name,fig);
+        var putOn=request.action==="put on"||request.action==="put on by id";
+        var payload={id:st.id,libraryID:app.db.libraryID,commitID:app.db.commitID};
+        if(putOn)payload.selection=setSelectionSnapshot(st,"Apply: "+st.name);
+        var report=runAction(putOn?"apply":"remove_set",key(fig),payload);
+        print(TITLE+" service: "+request.action+" | "+fig.getLabel()+" | "+st.name+" | report: "+report.folder);
+        if(!report.ok||report.blocked||report.failureCount)
+            throw new Error("Wardrobe action failed. "+report.outcome+" Report: "+report.folder);
+        if(report.warningCount)print(TITLE+" service warnings: "+report.warningMessages.join("; "));
+        result.set={id:st.id,name:st.name};result.reportPath=String(report.folder||"");
+        result.warningCount=Number(report.warningCount||0);result.warnings=report.warningMessages||[];
+        return result;
     }
     function main() {
         refreshWM2Figures();
@@ -16749,6 +17299,7 @@ function WM2ResourceName(directory,name) {
                         var hasOverrides=composite.activeOverrideCount>0;
                         var consent=MessageBox.warning(
                             composite.originalName+" has changed.\n\n"+
+                            (composite.rootParentChange?"New attachment: "+composite.rootParentLabel+".\n\n":"")+
                             (hasOverrides?
                                 "Click Reset and Create Variant to reset its old Overrides and register the new combination.":
                                 "Click Create Variant to register the new combination.")+
@@ -16817,16 +17368,26 @@ function WM2ResourceName(directory,name) {
             }catch(e2){if(!compositeDialogError(e2))MessageBox.critical(userErrorText(e2),TITLE,"&OK");}
         }
     }
+    var serviceArgs=typeof getArguments==="function"?getArguments():[];
+    var serviceMode=serviceArgs.length>0&&serviceArgs[0]==="--wm2-service-v1";
     // TEST_ENTRY_POINT: the mock harness evaluates functions without the native UI.
     if (typeof g_matewWearablesStatus !== "undefined" && g_matewWearablesStatus > 0) {
+        if(serviceMode)throw new Error("Wearable Manager is open or working. Close it before calling the service.");
         MessageBox.warning("Wearable Manager is open or working. Close it before opening Wardrobe.", TITLE, "&OK"); return;
     }
     if (typeof g_matewWardrobeSetsPrototypeBusy !== "undefined" && g_matewWardrobeSetsPrototypeBusy) {
+        if(serviceMode)throw new Error("Wardrobe is open or working. Close it before calling the service.");
         MessageBox.warning("Another Wardrobe Sets dialog/operation is open. Close it first.", TITLE, "&OK"); return;
     }
     g_matewWardrobeSetsPrototypeBusy = true;
-    try { main(); }
-    catch (fatal) { print(TITLE + ": " + errorText(fatal)); MessageBox.critical(userErrorText(fatal), TITLE, "&OK"); }
+    try {
+        if(serviceMode){
+            var serviceResult=JSON.stringify(mainService(serviceArgs));
+            if(serviceArgs.length===5)serviceArgs[4].setStringValue("result",serviceResult);
+            return serviceResult;
+        }else main();
+    }
+    catch (fatal) { print(TITLE + ": " + errorText(fatal)); if(serviceMode)throw fatal;MessageBox.critical(userErrorText(fatal), TITLE, "&OK"); }
     finally {
         try { if(viewportLocksOwned) releaseWardrobeViewportLocks("script_finally"); }
         finally { try { closeChannelSession(); releaseBulkBindings(); releasePropertyHelper(); } finally { readScope=null;g_matewWardrobeSetsPrototypeBusy=false; } }
