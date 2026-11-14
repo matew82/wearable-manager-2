@@ -1,0 +1,444 @@
+Wearable Manager Wardrobe - Undo/Redo verification
+2026-10-13
+
+Implemented
+- Scene metadata now uses a hidden native undoable string property. Legacy metadata remains readable; an authoritative null masks unregistered legacy records.
+- Recovery, ownership, registration and property-override state follow scene Undo/Redo. Support and membership readers use the same state.
+- Session hand-pose baselines follow Undo/Redo without becoming persistent scene metadata. Both hands, child bones and Pose Controls are covered.
+- Removing a pose-owning outfit through partial/bulk/single/transfer operations restores its hand baseline; a retained outfit keeps its pose.
+- GeoShell material values, maps, named UVs and property attributes are restored after native Undo/Redo recreates graft surfaces. A native callback remains available after the invoking script ends.
+- Successfully compensated failed actions add no Undo entry. Incomplete compensation retains its Undo group.
+
+Native verification
+DAZ Studio 4.24.0.4 and 6.25, isolated scenes and copies of the existing test library.
+Genesis 8.1 Male/Female; Sword, Sports Suit Grey/Red, Moisture Shell and New Gen graft fixtures.
+Apply/reapply, Take Off Set/All, Partial Sets, single/bulk store and return, cross-figure transfer, registration/unregistration, properties and materials, intentional action failure, save/reload and reapply.
+Both-hand Pose Controls, consecutive Undo/Redo and a new action after Undo passed in both versions.
+Encoded GeoShell callback passed after child script completion in both versions.
+DAZ 4 Restore Materials uses a DAZ 4-authored snapshot because the original DAZ 6 snapshot contains shader properties absent in DAZ 4. A separate native opacity change verifies an actual material Undo/Redo (not a no-op).
+Scene saves were verified in GUI-capable isolated instances; the native headless scene saver also exits on an untouched control scene.
+
+Automated suite: 1510 passed, 0 failed, 2 existing skips.
+
+Scope
+Scene Undo does not undo filesystem/catalog edits (saved/deleted set definitions, settings or copied libraries). Immutable catalog revisions remain available.
+Tests cover the installed DAZ versions and listed assets; Genesis 9 and arbitrary third-party shader implementations were not covered. Existing scenes already missing recovery information were not modified or reconstructed.
+
+Evidence
+
+undo-matrix-4
+PASS load figure
+PASS apply matew_set_mv64xl4a_e_emo0nu D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68v7dr_1_9sivfe
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS remove_set matew_set_mv64xl4a_e_emo0nu D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68ve3v_8_4qj3hs
+PASS native undo remove_set
+PASS exact metadata/links/hand undo remove_set
+PASS native redo remove_set
+PASS exact metadata/links/hand redo remove_set
+PASS apply matew_set_mv64xl4a_e_emo0nu D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68vj8k_e_tn36hw
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS undress_all  D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68vog8_h_dj1vhg
+PASS native undo undress_all
+PASS exact metadata/links/hand undo undress_all
+PASS native redo undress_all
+PASS exact metadata/links/hand redo undress_all
+PASS apply matew_set_mv64xl4a_e_emo0nu D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68vte9_k_522d90
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS apply matew_set_mv654aw9_p_2snd77 D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68vyld_n_e4pwe2
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS save matew_set_mv654aw9_p_2snd77 D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68w8q4_z_fgaw9z
+PASS apply matew_set_mv654aw9_p_2snd77 D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68wc4p_14_x7lzfg
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS restore_properties matew_set_mv654aw9_p_2snd77 D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68wi33_17_3c9fgz
+PASS unchanged action restore_properties
+PASS partial_apply matew_set_mv654aw9_p_2snd77 D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68wjuu_1a_6wfawh
+PASS native undo partial_apply
+PASS exact metadata/links/hand undo partial_apply
+PASS native redo partial_apply
+PASS exact metadata/links/hand redo partial_apply
+PASS save matew_set_mv657yf0_4_awhsml D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68wnf6_1d_ues8kt
+PASS restore_materials matew_set_mv657yf0_4_awhsml D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68wqu1_1l_xzvjgb
+PASS unchanged action restore_materials
+PASS partial_apply matew_set_mv654aw9_p_2snd77 D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68wtf1_1r_hm4hen
+PASS native undo partial_apply
+PASS exact metadata/links/hand undo partial_apply
+PASS native redo partial_apply
+PASS exact metadata/links/hand redo partial_apply
+PASS apply matew_set_mv64xl4a_e_emo0nu D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68x0o3_5r_t83ncu
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS apply matew_set_mv654aw9_p_2snd77 D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68x6dv_5u_9ftypt
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS store_registered  D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68xdh5_5x_xnlfjc
+PASS native undo store_registered
+PASS exact metadata/links/hand undo store_registered
+PASS native redo store_registered
+PASS exact metadata/links/hand redo store_registered
+PASS return_registered  D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68xilw_60_fpljwv
+PASS native undo return_registered
+PASS exact metadata/links/hand undo return_registered
+PASS native redo return_registered
+PASS exact metadata/links/hand redo return_registered
+PASS apply matew_set_mv657yf0_4_awhsml D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68xnli_63_lgwat8
+PASS unchanged action apply
+PASS bulk_move  D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68xqfk_66_fvwvmr
+PASS native undo bulk_move
+PASS exact metadata/links/hand undo bulk_move
+PASS native redo bulk_move
+PASS exact metadata/links/hand redo bulk_move
+PASS bulk_move  D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68xwge_69_2ik2ye
+PASS native undo bulk_move
+PASS exact metadata/links/hand undo bulk_move
+PASS native redo bulk_move
+PASS exact metadata/links/hand redo bulk_move
+PASS store_registered  D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68y2lu_6c_bqtia7
+PASS unchanged action store_registered
+PASS return_registered  D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68y4cn_6f_ieqbzf
+PASS native undo return_registered
+PASS exact metadata/links/hand undo return_registered
+PASS native redo return_registered
+PASS exact metadata/links/hand redo return_registered
+PASS load recipient
+PASS apply matew_set_mv64xl4a_e_emo0nu D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68yc5l_6i_1q981w
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS delete matew_set_mv64xl4a_e_emo0nu D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68yjs3_6o_rpm4cm
+PASS unregister_registered  D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68ym8g_6t_hma0y3
+PASS native undo unregister_registered
+PASS exact metadata/links/hand undo unregister_registered
+PASS native redo unregister_registered
+PASS exact metadata/links/hand redo unregister_registered
+PASS unregistered sword available for fresh registration
+PASS save  D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68yvtm_6w_ew362h
+PASS native undo save
+PASS exact metadata/links/hand undo save
+PASS native redo save
+PASS exact metadata/links/hand redo save
+PASS injected failure reported
+PASS failed action restored state
+PASS failed action adds no undo entry
+PASS apply matew_set_mv68yxzx_74_oveaj7 D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68z9o5_7c_nei2jt
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS save scene with undo metadata
+PASS reload scene
+PASS all metadata survives scene save/reload
+PASS undress_all  D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68zpot_7h_jlolga
+PASS native undo undress_all
+PASS exact metadata/links/hand undo undress_all
+PASS native redo undress_all
+PASS exact metadata/links/hand redo undress_all
+PASS apply matew_set_mv68yxzx_74_oveaj7 D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-4-1791869530615/Logs/matew_operation_mv68zy65_7m_qn74ip
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS MATRIX COMPLETE
+
+undo-matrix-6
+PASS load figure
+PASS apply matew_set_mv64xl4a_e_emo0nu D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-6-1791869013920/Logs/matew_operation_mv68k2ib_1_sxd63y
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS remove_set matew_set_mv64xl4a_e_emo0nu D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-6-1791869013920/Logs/matew_operation_mv68k5po_8_afg2g5
+PASS native undo remove_set
+PASS exact metadata/links/hand undo remove_set
+PASS native redo remove_set
+PASS exact metadata/links/hand redo remove_set
+PASS apply matew_set_mv64xl4a_e_emo0nu D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-6-1791869013920/Logs/matew_operation_mv68k7ha_e_gm8uwg
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS undress_all  D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-6-1791869013920/Logs/matew_operation_mv68k9ik_h_y7mywt
+PASS native undo undress_all
+PASS exact metadata/links/hand undo undress_all
+PASS native redo undress_all
+PASS exact metadata/links/hand redo undress_all
+PASS apply matew_set_mv64xl4a_e_emo0nu D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-6-1791869013920/Logs/matew_operation_mv68kb6e_k_f7khfo
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS apply matew_set_mv654aw9_p_2snd77 D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-6-1791869013920/Logs/matew_operation_mv68kd0m_n_oohyws
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS save matew_set_mv654aw9_p_2snd77 D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-6-1791869013920/Logs/matew_operation_mv68kh15_z_7iiz0f
+PASS apply matew_set_mv654aw9_p_2snd77 D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-6-1791869013920/Logs/matew_operation_mv68kizr_14_k8vbuo
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS restore_properties matew_set_mv654aw9_p_2snd77 D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-6-1791869013920/Logs/matew_operation_mv68kkxq_17_x1pgzq
+PASS unchanged action restore_properties
+PASS partial_apply matew_set_mv654aw9_p_2snd77 D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-6-1791869013920/Logs/matew_operation_mv68klgs_1a_buhh6z
+PASS native undo partial_apply
+PASS exact metadata/links/hand undo partial_apply
+PASS native redo partial_apply
+PASS exact metadata/links/hand redo partial_apply
+PASS restore_materials matew_set_mv657yf0_4_awhsml D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-6-1791869013920/Logs/matew_operation_mv68kmzg_1d_s4iixf
+PASS unchanged action restore_materials
+PASS partial_apply matew_set_mv654aw9_p_2snd77 D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-6-1791869013920/Logs/matew_operation_mv68ko0e_1j_wwf9qb
+PASS native undo partial_apply
+PASS exact metadata/links/hand undo partial_apply
+PASS native redo partial_apply
+PASS exact metadata/links/hand redo partial_apply
+PASS apply matew_set_mv64xl4a_e_emo0nu D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-6-1791869013920/Logs/matew_operation_mv68kr2j_5j_yi5bze
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS apply matew_set_mv654aw9_p_2snd77 D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-6-1791869013920/Logs/matew_operation_mv68kt4t_5m_1i4h1u
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS store_registered  D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-6-1791869013920/Logs/matew_operation_mv68kwji_5p_p4ll9b
+PASS native undo store_registered
+PASS exact metadata/links/hand undo store_registered
+PASS native redo store_registered
+PASS exact metadata/links/hand redo store_registered
+PASS return_registered  D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-6-1791869013920/Logs/matew_operation_mv68kyed_5s_c8c7le
+PASS native undo return_registered
+PASS exact metadata/links/hand undo return_registered
+PASS native redo return_registered
+PASS exact metadata/links/hand redo return_registered
+PASS apply matew_set_mv657yf0_4_awhsml D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-6-1791869013920/Logs/matew_operation_mv68l0e8_5v_1gtlzv
+PASS unchanged action apply
+PASS bulk_move  D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-6-1791869013920/Logs/matew_operation_mv68l19s_5y_mb5vh9
+PASS native undo bulk_move
+PASS exact metadata/links/hand undo bulk_move
+PASS native redo bulk_move
+PASS exact metadata/links/hand redo bulk_move
+PASS bulk_move  D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-6-1791869013920/Logs/matew_operation_mv68l3je_61_bs6ldg
+PASS native undo bulk_move
+PASS exact metadata/links/hand undo bulk_move
+PASS native redo bulk_move
+PASS exact metadata/links/hand redo bulk_move
+PASS store_registered  D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-6-1791869013920/Logs/matew_operation_mv68l6q6_64_nrh7wh
+PASS unchanged action store_registered
+PASS return_registered  D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-6-1791869013920/Logs/matew_operation_mv68l775_67_2j6gw5
+PASS native undo return_registered
+PASS exact metadata/links/hand undo return_registered
+PASS native redo return_registered
+PASS exact metadata/links/hand redo return_registered
+PASS load recipient
+PASS apply matew_set_mv64xl4a_e_emo0nu D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-6-1791869013920/Logs/matew_operation_mv68lc2w_6a_ef7e1o
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS delete matew_set_mv64xl4a_e_emo0nu D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-6-1791869013920/Logs/matew_operation_mv68lepc_6g_vmzub3
+PASS unregister_registered  D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-6-1791869013920/Logs/matew_operation_mv68lg48_6l_reyysa
+PASS native undo unregister_registered
+PASS exact metadata/links/hand undo unregister_registered
+PASS native redo unregister_registered
+PASS exact metadata/links/hand redo unregister_registered
+PASS unregistered sword available for fresh registration
+PASS save  D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-6-1791869013920/Logs/matew_operation_mv68liui_6o_1nyr1f
+PASS native undo save
+PASS exact metadata/links/hand undo save
+PASS native redo save
+PASS exact metadata/links/hand redo save
+PASS injected failure reported
+PASS failed action restored state
+PASS failed action adds no undo entry
+PASS apply matew_set_mv68lk0x_6w_3ke6dw D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-6-1791869013920/Logs/matew_operation_mv68lo6f_74_11g047
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS save scene with undo metadata
+PASS reload scene
+PASS all metadata survives scene save/reload
+PASS undress_all  D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-6-1791869013920/Logs/matew_operation_mv68lwg8_79_r1h22d
+PASS native undo undress_all
+PASS exact metadata/links/hand undo undress_all
+PASS native redo undress_all
+PASS exact metadata/links/hand redo undress_all
+PASS apply matew_set_mv68lk0x_6w_3ke6dw D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-library-6-1791869013920/Logs/matew_operation_mv68lz6m_7e_z3t9st
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS MATRIX COMPLETE
+
+undo-hand-4
+PASS load figure
+PASS apply matew_set_mv64xl4a_e_emo0nu D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-hand-library-4-1791869569204/Logs/matew_operation_mv68vq71_1_xn8ij7
+PASS left-hand Pose Controls authored
+PASS save matew_set_mv64xl4a_e_emo0nu D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-hand-library-4-1791869569204/Logs/matew_operation_mv68vsyp_8_yo9ewz
+PASS undress_all  D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-hand-library-4-1791869569204/Logs/matew_operation_mv68vwow_d_fggwbd
+PASS native undo undress_all
+PASS exact metadata/links/hand undo undress_all
+PASS native redo undress_all
+PASS exact metadata/links/hand redo undress_all
+PASS apply matew_set_mv64xl4a_e_emo0nu D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-hand-library-4-1791869569204/Logs/matew_operation_mv68w1a9_j_woto5v
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS undress_all  D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-hand-library-4-1791869569204/Logs/matew_operation_mv68w72l_m_66j1zh
+PASS apply matew_set_mv654aw9_p_2snd77 D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-hand-library-4-1791869569204/Logs/matew_operation_mv68w9lh_p_1f0tmi
+PASS history undo 1
+PASS history undo 2
+PASS two-step Undo restores both hands and metadata
+PASS history redo 1
+PASS history redo 2
+PASS two-step Redo restores both hands and metadata
+PASS branch undo
+PASS apply matew_set_mv64xl4a_e_emo0nu D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-hand-library-4-1791869569204/Logs/matew_operation_mv68wiho_11_t53yrv
+PASS new action replaces Redo branch
+PASS undress_all  D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-hand-library-4-1791869569204/Logs/matew_operation_mv68wlr3_14_ohygwi
+PASS native undo undress_all
+PASS exact metadata/links/hand undo undress_all
+PASS native redo undress_all
+PASS exact metadata/links/hand redo undress_all
+PASS apply matew_set_mv64xl4a_e_emo0nu D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-hand-library-4-1791869569204/Logs/matew_operation_mv68wr83_17_yogkbi
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS MATRIX COMPLETE
+
+undo-hand-6
+PASS load figure
+PASS apply matew_set_mv64xl4a_e_emo0nu D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-hand-library-6-1791869568654/Logs/matew_operation_mv68vq2b_1_h6j7ge
+PASS left-hand Pose Controls authored
+PASS save matew_set_mv64xl4a_e_emo0nu D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-hand-library-6-1791869568654/Logs/matew_operation_mv68vqs0_8_osertk
+PASS undress_all  D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-hand-library-6-1791869568654/Logs/matew_operation_mv68vspm_d_7s46bk
+PASS native undo undress_all
+PASS exact metadata/links/hand undo undress_all
+PASS native redo undress_all
+PASS exact metadata/links/hand redo undress_all
+PASS apply matew_set_mv64xl4a_e_emo0nu D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-hand-library-6-1791869568654/Logs/matew_operation_mv68vtzn_j_uckyln
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS undress_all  D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-hand-library-6-1791869568654/Logs/matew_operation_mv68vvii_m_ezlk0q
+PASS apply matew_set_mv654aw9_p_2snd77 D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-hand-library-6-1791869568654/Logs/matew_operation_mv68vw67_p_mtfuy2
+PASS history undo 1
+PASS history undo 2
+PASS two-step Undo restores both hands and metadata
+PASS history redo 1
+PASS history redo 2
+PASS two-step Redo restores both hands and metadata
+PASS branch undo
+PASS apply matew_set_mv64xl4a_e_emo0nu D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-hand-library-6-1791869568654/Logs/matew_operation_mv68vzvk_11_530or5
+PASS new action replaces Redo branch
+PASS undress_all  D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-hand-library-6-1791869568654/Logs/matew_operation_mv68w0ob_14_xbriei
+PASS native undo undress_all
+PASS exact metadata/links/hand undo undress_all
+PASS native redo undress_all
+PASS exact metadata/links/hand redo undress_all
+PASS apply matew_set_mv64xl4a_e_emo0nu D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-hand-library-6-1791869568654/Logs/matew_operation_mv68w238_17_6c7q25
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS MATRIX COMPLETE
+
+undo-material-4
+PASS load figure
+PASS apply matew_set_mv654aw9_p_2snd77 D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-material-library-4-1791869655245/Logs/matew_operation_mv68xkx8_1_6u6lle
+PASS save matew_set_mv657yf0_4_awhsml D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-material-library-4-1791869655245/Logs/matew_operation_mv68xqfq_f_ixr2vx
+PASS native opacity fixture
+PASS restore_materials matew_set_mv657yf0_4_awhsml D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-material-library-4-1791869655245/Logs/matew_operation_mv68xujz_n_6gyjig
+PASS native undo restore_materials
+PASS exact metadata/links/hand undo restore_materials
+PASS native redo restore_materials
+PASS exact metadata/links/hand redo restore_materials
+PASS MATRIX COMPLETE
+
+undo-geo-4
+PASS load figure
+PASS apply matew_set_mv42ci45_b_ppwo4y D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-geo-library-4-1791868864213/Logs/matew_operation_mv68gny4_1_mbrj7p
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS apply matew_set_mv4ovxkx_x_7y3qrh D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-geo-library-4-1791868864213/Logs/matew_operation_mv68gtop_8_e5tvvm
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS undress_all  D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-geo-library-4-1791868864213/Logs/matew_operation_mv68h8xn_l_gw7knr
+PASS native undo undress_all
+PASS exact metadata/links/hand undo undress_all
+PASS native redo undress_all
+PASS exact metadata/links/hand redo undress_all
+PASS apply matew_set_mv4ovxkx_x_7y3qrh D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-geo-library-4-1791868864213/Logs/matew_operation_mv68hhg3_1s_3jioog
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS MATRIX COMPLETE
+
+undo-geo-6
+PASS load figure
+PASS apply matew_set_mv42ci45_b_ppwo4y D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-geo-library-6-1791868753682/Logs/matew_operation_mv68e9bn_1_ro0gs0
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS apply matew_set_mv4ovxkx_x_7y3qrh D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-geo-library-6-1791868753682/Logs/matew_operation_mv68ebqg_8_4f9qbu
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS undress_all  D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-geo-library-6-1791868753682/Logs/matew_operation_mv68eisa_l_pq73hm
+PASS native undo undress_all
+PASS exact metadata/links/hand undo undress_all
+PASS native redo undress_all
+PASS exact metadata/links/hand redo undress_all
+PASS apply matew_set_mv4ovxkx_x_7y3qrh D:/Tests/DAZ Test Folder/Scripts/matew/Wearables Manager 2/.test-output/undo-geo-library-6-1791868753682/Logs/matew_operation_mv68elsa_1s_heqyua
+PASS native undo apply
+PASS exact metadata/links/hand undo apply
+PASS native redo apply
+PASS exact metadata/links/hand redo apply
+PASS MATRIX COMPLETE
+
+undo-callback-lifetime-4
+Child script ended; shells=3
+Undo after script closed
+PASS encoded callback survives script completion and restores GeoShell on Redo
+
+undo-callback-lifetime-6
+Child script ended; shells=3
+Undo after script closed
+PASS encoded callback survives script completion and restores GeoShell on Redo
+
+Shipped DSE SHA256
+Wearable Manager Wardrobe.dse 2d913d0fd8cb99f4cd787eac176b53fbd7cef677dcfbeae651c8c8b12702b2ff
+Resources/Wearable Manager Support.dse 0b6297768f3d03394cdee80288e51260ea83a106aa05deba5ca0f721da8b7ed6
+Resources/Wearable Manager Wardrobe Bridge.dse 73d757e033e61c44078aafca1bf27c73db7cc21c016758398c2e92073753dd6d
+Resources/Wearable Manager Undo Materials.dse 9e0dfdf5137eb3319c587c59e3177079cd4e0678e51c790bedb928b68d16d923

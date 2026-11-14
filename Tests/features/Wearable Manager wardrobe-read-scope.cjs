@@ -7,8 +7,9 @@ let passed=0;const failures=[];
 function test(name,run){try{run();passed++;}catch(e){failures.push({name,error:e.stack});}}
 
 test('version and changelog name the UI read-scope reuse',()=>{
- assert(wardrobe.includes('var VERSION = "0.9.10.44"'));
+
  assert(wardrobe.includes('UI read-scope reuse for inventory and materials'));
+
  assert(wardrobe.includes('inventoryCacheHits'));
  assert(wardrobe.includes('materialCacheHits'));
 });
@@ -20,6 +21,40 @@ test('readSceneStatus shares one withReadScope across summary and cards',()=>{
  assert(body.includes('renderCards('));
  assert(body.indexOf('withReadScope(')<body.indexOf('readOutfitSummary('));
  assert(body.indexOf('readOutfitSummary(')<body.indexOf('renderCards('));
+});
+
+test('first open uses openSceneStatus instead of an early inventory pass',()=>{
+ const body=getFunction(wardrobe,'mainDialog').text;
+ assert(body.includes('function openSceneStatus()'));
+ assert(body.includes('openSceneStatus();'));
+ assert(!/sortSummary\s*=\s*sortFigure\s*\?\s*readOutfitSummary/.test(body));
+ const open=getFunction(wardrobe,'openSceneStatus').text;
+ assert(open.includes('readSceneStatus();'));
+ const refresh=getFunction(wardrobe,'readSceneStatus').text;
+ assert(refresh.includes('withReadScope(function()'));
+ assert(refresh.indexOf('readOutfitSummary(')<refresh.indexOf('renderCards('));
+});
+
+test('post-action finally reuses stored card diagnostics when status is fresh',()=>{
+ const body=getFunction(wardrobe,'mainDialog').text;
+ assert(body.includes('function refreshCardChrome()'));
+ assert(/if\(sceneStatusFresh\)renderCards\(false\);\s*else readSceneStatus\(\);/.test(body));
+ assert(body.includes('if(!action)refreshCardChrome();'));
+ assert(!/finally\{busy=false;box\.enabled=true;renderCards\(\);\}/.test(body));
+});
+
+test('Take Off All and Take Off Set chrome stay summary-driven',()=>{
+ const body=getFunction(wardrobe,'mainDialog').text;
+ assert(body.includes('takeOffAll.text=recoverableComposite?"                  Resolve Changed Wearable...":'));
+ assert(body.includes('"Take Off All"+(summary.valid&&summary.activeIDs.length?" ("+summary.activeIDs.length+")":"")'));
+ assert(body.includes('takeOffAll.toolTip=recoverableComposite?'));
+ assert(body.includes('"Store all currently worn registered items for the selected figure."'));
+ assert(body.includes('if(hasWornMember)rec.removeSet.show();else rec.removeSet.hide();'));
+ assert(body.includes('removeSet.hide();'));
+ assert(body.includes('removeSet.toolTip="Take Off Set: store all worn members of this Set regardless of Keep/Replace policy, and reset its active Property Overrides. Other items stay worn."'));
+ // Provisional empty summary must not be the last paint before the dialog shows.
+ assert(body.indexOf('summary={valid:false,activeIDs:[],message:""}')<body.indexOf('openSceneStatus();'));
+ assert(body.includes('summary=fig?readOutfitSummary(fig)'));
 });
 
 test('withReadScope and invalidateReadScope manage inventory/materials maps',()=>{

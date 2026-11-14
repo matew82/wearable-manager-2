@@ -1,0 +1,27 @@
+2026-10-13
+Native UI checks (DAZ 4.24 and 6.25)
+
+Button-style multi-selection; green selected, gray unselected; Select All/Unselect All; unavailable items excluded.
+Manual DAZ 6 click test returned [shorts,tank] after Select All and deselect Sneakers.
+Native geometry for 3 items: 670 x 286 client area, 10px outer margins, 10px spacing; centered footer endpoints 45 and 605 in a 650px row.
+20-item list: capped 350px scroll area, 496px dialog; only 3 eligible items selected.
+
+DAZ 4
+READY
+{"count":3,"dialog":[670,286],"scroll":[10,10,650,140],"content":[646,136],"footer":[10,160,650,34],"buttons":[45,605],"note":[244,32]}
+all=3
+none=0
+{"count":20,"dialog":[670,496],"scroll":[10,10,650,350],"content":[637,850],"footer":[10,370,650,34],"buttons":[45,605],"note":[454,32]}
+all=3
+none=0
+Selected: null
+
+DAZ 6
+READY
+{"count":3,"dialog":[670,286],"scroll":[10,10,650,140],"content":[646,136],"footer":[10,160,650,34],"buttons":[45,605],"note":[244,32]}
+all=3
+none=0
+{"count":20,"dialog":[670,496],"scroll":[10,10,650,350],"content":[637,850],"footer":[10,370,650,34],"buttons":[45,605],"note":[454,32]}
+all=3
+none=0
+Selected: null

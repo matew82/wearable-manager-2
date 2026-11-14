@@ -1,0 +1,62 @@
+// Native callback owned by a private figure property; values follow Undo history.
+// Runs after the native Undo/Redo event has rebuilt GeoShell surface objects.
+(function(){
+    if(typeof CallBack==='undefined'||CallBack.getDynamicProperty('busy')===true)return;
+    function equal(a,b){
+        if(typeof a==='number'&&typeof b==='number')return isFinite(a)&&isFinite(b)&&Math.abs(a-b)<=1e-5*Math.max(1,Math.abs(a),Math.abs(b));
+        if(a===b)return true;if(!a||!b||typeof a!=='object'||typeof b!=='object')return false;
+        var ak=Object.keys(a).sort(),bk=Object.keys(b).sort();if(ak.join('|')!==bk.join('|'))return false;
+        for(var i=0;i<ak.length;i++)if(!equal(a[ak[i]],b[ak[i]]))return false;return true;
+    }
+    var locked=false;
+    try{
+        var marker=CallBack.getSender();if(!marker)return;
+        var raw=String(marker.getValue()||'');
+        if(!raw)return;
+        var records=JSON.parse(raw).records,writes=[],uvs=[],flags=Number(DzProperty.IncludeDefault)|Number(DzProperty.CurrentValue);
+        Scene.update();
+        for(var i=0;i<records.length;i++){
+            var r=records[i],node=Scene.findNodeByElementID(r.elementID);
+            if(!node)continue; // A newly imported shell does not exist on Undo.
+            if(!node.inherits('DzGeometryShellNode'))throw new Error('Undo shell identity changed.');
+            var shape=node.getObject().getCurrentShape();
+            if(shape.getNumMaterials()!==r.surfaces.length)throw new Error('Undo shell topology mismatch: '+node.getLabel());
+            for(var j=0;j<r.surfaces.length;j++){
+                var surface=r.surfaces[j],mat=shape.findMaterial(surface.name);
+                if(!mat||String(mat.className())!==surface.shaderClass)throw new Error('Undo shader mismatch: '+surface.name);
+                var list=mat.getPropertyList(),lookup={};
+                if(list.length!==surface.properties.length)throw new Error('Undo shader property count changed: '+surface.name);
+                for(var k=0;k<list.length;k++)lookup['$'+String(list[k].name)]=list[k];
+                for(var k=0;k<surface.properties.length;k++){
+                    var saved=surface.properties[k],p=lookup['$'+saved.name];
+                    if(!p)throw new Error('Undo property missing: '+saved.name);
+                    if(saved.name==='UV Set')continue; // Restore named UV, never a stale enum index.
+                    var settings=new DzSettings();
+                    if(!settings.fromString(saved.settings))throw new Error('Invalid Undo material snapshot.');
+                    var attributes=new DzPropertySettings();if(!attributes.fromString(saved.attributes))throw new Error('Invalid Undo attributes.');
+                    var current=new DzSettings();p.addValueToSettings(current,flags);
+                    var currentAttributes=new DzPropertySettings();p.getAttributes(currentAttributes);
+                    if(String(saved.settings.charAt(0)==="<"?current.toString():current.toJsonString())!==saved.settings||String(saved.attributes.charAt(0)==="<"?currentAttributes.toString():currentAttributes.toJsonString())!==saved.attributes)writes.push({property:p,settings:settings,attributes:attributes});
+                }
+                var uv=mat.getUVSetControl();if(!uv)throw new Error('Undo UV control missing: '+surface.name);
+                uvs.push({property:uv,name:surface.uv});
+            }
+        }
+        UndoStack.lock();locked=true;
+        for(var i=0;i<writes.length;i++){writes[i].property.setAttributes(writes[i].attributes);writes[i].property.setValueFromSettings(writes[i].settings,flags);}
+        for(var i=0;i<uvs.length;i++)if(String(uvs[i].property.getStringValue())!==uvs[i].name){
+            uvs[i].property.setValueFromString(uvs[i].name);
+            if(String(uvs[i].property.getStringValue())!==uvs[i].name)throw new Error('Undo UV restore failed.');
+        }
+        for(var i=0;i<writes.length;i++){
+            var check=new DzSettings();writes[i].property.addValueToSettings(check,flags);
+            if(!equal(check.toJson(),writes[i].settings.toJson()))throw new Error('Undo material readback failed: '+writes[i].property.name);
+        }
+        CallBack.setDynamicProperty('error','');
+        print('Wearable Manager: GeoShell Undo/Redo material state restored; properties='+writes.length);
+    }catch(e){
+        CallBack.setDynamicProperty('error',String(e));
+        print('Wearable Manager: GEO_UNDO_ERROR '+String(e));
+        MessageBox.warning('Some GeoShell materials could not be restored after Undo/Redo. Technical details are in the DAZ Log.','matew Wardrobe','&OK');
+    }finally{if(locked)UndoStack.unlock();}
+})();
